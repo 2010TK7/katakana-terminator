@@ -1,30 +1,53 @@
-### Katakana Terminator 片假名终结者 カタカナ‌ターミネーター
+# Katakana Terminator 片假名终结者
 
-#### In a nutshell 简介
-A browser extension to convert *gairaigo* (Japanese loan words) back to English.
+一个用户脚本：在网页中识别日语片假名外来语，并在上方以 ruby 注音形式标注英文对应词。
 
-这是一个浏览器扩展插件，在网页中的日语外来语上方标注英文原词。
+本分支项目地址：
+https://github.com/Leimeng52mc/katakana-terminator
 
-#### Installation 安装
-Please follow the [installation instructions](https://greasyfork.org/en) to configure your browser,
-then [click here to get the user script](https://github.com/Arnie97/katakana-terminator/raw/master/katakana-terminator.user.js).
+GreasyFork 页面：
+https://greasyfork.org/zh-CN/scripts/575335-%E7%89%87%E5%81%87%E5%90%8D%E7%BB%88%E7%BB%93%E8%80%85
 
-请先[阅读教程](https://greasyfork.org/zh-CN)，在浏览器中安装一个用户脚本管理器。之后[戳这里下载并安装本程序](https://github.com/Arnie97/katakana-terminator/raw/master/katakana-terminator.user.js)。
+## 主要功能
 
-#### Limits 已知缺陷
-*Gairaigo* from other source languages is also converted to English.
+1. 扫描网页文本节点，识别片假名词组。
+2. 自动插入 `ruby + rt` 标注，不改动原文阅读顺序。
+3. 支持多翻译后端：
+	- Microsoft Edge 翻译后端（无密钥模式）
+	- Google 翻译后端
+4. 支持失败回退策略：Edge 请求失败可自动回退到 Google。
+5. 支持 Tampermonkey 图形化配置菜单：可切换后端与回退行为。
 
-即便一组片假名并非源于英语，也会标注为英语中的对应词汇。
+## 本分支改动点
 
-#### Thanks 致谢
-Based on the Google Translate API, which was described in [this post](https://github.com/ssut/py-googletrans/issues/268).
+1. 适配较新的 Tampermonkey API 用法与运行方式。
+2. 增加 Edge 翻译后端支持，并保留 Google 后端。
+3. 增加配置持久化与菜单弹窗（GUI）设置。
+4. 优化请求与缓存流程，减少重复请求。
 
-基于谷歌翻译开发，[API 参考此处](https://github.com/ssut/py-googletrans/issues/268)。
+## 使用说明
 
-#### Feedback 反馈
-The GitHub issue tracker has been disabled to prevent duplicate comments.
-Please report bugs and issues to [the Greasy Fork feedback page](http://greasyfork.org/scripts/33268/feedback).
-Check whether you could visit [Google Translate](https://translate.google.com) if the extension does not work on your PC.
+1. 安装 Tampermonkey。
+2. 访问 GreasyFork 页面并安装脚本：
+	https://greasyfork.org/zh-CN/scripts/575335-%E7%89%87%E5%81%87%E5%90%8D%E7%BB%88%E7%BB%93%E8%80%85
+3. 或手动导入并启用 `katakana-terminator.user.js`。
+4. 在 Tampermonkey 菜单中打开“Katakana Terminator: 翻译设置”。
+5. 选择翻译后端并保存，设置会持久化生效。
 
-为避免两边重复发帖，GitHub Issues 现已关闭，敬请[访问 Greasy Fork 反馈您的问题和建议](https://greasyfork.org/zh-CN/scripts/33268-katakana-terminator/feedback)。
-由于众所周知的原因，某些地区有时无法访问[谷歌翻译](https://translate.google.cn)。如果您无法使用此扩展，请先检查能否访问该网站。
+## 注意事项
+
+1. 片假名不一定都来源于英语，翻译结果可能存在语义偏差。
+2. Edge 无认证接口属于网页侧能力，稳定性可能随上游变化。
+3. Google 或 Edge 在不同网络环境下可用性不同。
+4. 该脚本会遍历文本节点，超大型动态页面可能带来额外性能开销。
+
+## 原项目与作者
+
+1. 原项目仓库：https://github.com/Arnie97/katakana-terminator
+2. 原作者：Arnie97
+3. 本分支维护者：Leimeng52mc
+
+## 声明
+
+1. 本项目是一个 vibe coding 产物。
+2. 许可证保持不变，继续使用 MIT License。
