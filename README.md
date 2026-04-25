@@ -6,7 +6,7 @@
 https://github.com/Leimeng52mc/katakana-terminator
 
 GreasyFork 页面：
-https://greasyfork.org/zh-CN/scripts/575335-%E7%89%87%E5%81%87%E5%90%8D%E7%BB%88%E7%BB%93%E8%80%85
+https://greasyfork.org/zh-CN/scripts/575335
 
 ## 主要功能
 
@@ -29,7 +29,7 @@ https://greasyfork.org/zh-CN/scripts/575335-%E7%89%87%E5%81%87%E5%90%8D%E7%BB%88
 
 1. 安装 Tampermonkey。
 2. 访问 GreasyFork 页面并安装脚本：
-	https://greasyfork.org/zh-CN/scripts/575335-%E7%89%87%E5%81%87%E5%90%8D%E7%BB%88%E7%BB%93%E8%80%85
+	https://greasyfork.org/zh-CN/scripts/575335
 3. 或手动导入并启用 `katakana-terminator.user.js`。
 4. 在 Tampermonkey 菜单中打开“Katakana Terminator: 翻译设置”。
 5. 选择翻译后端并保存，设置会持久化生效。
