@@ -1,6 +1,9 @@
 // ==UserScript==
 // @name        片假名终结者
-// @description 在网页中的日语外来语上方标注英文原词
+// @name:ja  カタカナターミネーター
+// @name:en     Katakana Terminator
+// @name:ko-KR  가타카나 터미네이터
+// @description 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
 // @author      Arnie97, Leimeng52mc
 // @license     MIT
 // @copyright   2017-2026, Katakana Terminator Contributors (https://github.com/Leimeng52mc/katakana-terminator/graphs/contributors)
@@ -9,7 +12,6 @@
 // @supportURL  https://github.com/Leimeng52mc/katakana-terminator/issues
 // @icon        https://upload.wikimedia.org/wikipedia/commons/2/28/Ja-Ruby.png
 // @match       *://*/*
-// @exclude     *://*.bilibili.com/video/*
 // @run-at      document-idle
 // @grant       GM.xmlHttpRequest
 // @grant       GM_addStyle
@@ -19,15 +21,11 @@
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
 // @connect     api-edge.cognitive.microsofttranslator.com
-// @version     2026.04.25
-// @name:zh-CN  片假名终结者
-// @name:ja  カタカナターミネーター
-// @name:en     Katakana Terminator
-// @name:ko-KR  가타카나 터미네이터
-// @description:zh-CN 在网页中的日语外来语上方标注英文原词
-// @description:ja ウェブページノニホンゴガイライゴノウエニエイゴゲンゴヲルビヒョウジ
-// @description:en Convert Japanese loanwords (gairaigo) on web pages back to English with ruby annotations
-// @description:ko-KR 웹페이지의 일본어 외래어 위에 영어 원어를 루비로 표시
+// @version     2026.04.28
+// @description:zh-CN 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
+// @description:ja ウェブページノニホンゴガイライゴノウエニエイゴゲンゴヲルビヒョウジ、オヨビカスタマイズカノウナジョガイURLブラックリスト
+// @description:en Convert Japanese loanwords (gairaigo) on web pages back to English with ruby annotations, with a configurable exclusion blacklist
+// @description:ko-KR 웹페이지의 일본어 외래어 위에 영어 원어를 루비로 표시하며, 제외 URL 블랙리스트를 설정할 수 있습니다
 // ==/UserScript==
 
 (() => {
@@ -37,16 +35,37 @@
     const queue = new Map(); // phrase -> Set<rt>
     const cache = new Map(); // phrase -> translated text | null (in-flight)
     const pendingNodes = new Set();
+    const textNodeSnapshot = new WeakMap();
 
-    const EXCLUDE_TAGS = new Set(['ruby', 'script', 'select', 'textarea']);
-    const KATAKANA_RE = /[\u30A1-\u30FA\u30FD-\u30FF][\u3099\u309A\u30A1-\u30FF]*[\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]|[\uFF66-\uFF6F\uFF71-\uFF9D][\uFF65-\uFF9F]*[\uFF66-\uFF9F]/;
+    const EXCLUDE_TAGS = new Set([
+        'ruby', 'script', 'style', 'noscript', 'select', 'textarea', 'input', 'option',
+        'code', 'pre', 'kbd', 'samp',
+    ]);
+    const QUICK_KATAKANA_RE = /[\u30A1-\u30FF\uFF66-\uFF9F]/;
+    const KATAKANA_CANDIDATE_RE = /[\u30A1-\u30FF\uFF66-\uFF9F]+/g;
+    const MIN_PHRASE_LENGTH = 2;
 
     const CHUNK_SIZE = 200;
     const RESCAN_DELAY_MS = 200;
     const CONFIG_KEY = 'katakana-terminator-config-v1';
+    const CONFIG_VERSION = 2;
     const DEFAULT_CONFIG = {
+        version: CONFIG_VERSION,
         backend: 'edge', // 'edge' | 'google'
         edgeFallbackToGoogle: true,
+        blacklist: [
+            '*://*.bilibili.com/*',
+            '*://*.weibo.com/*',
+            '*://*.xiaohongshu.com/*',
+            '*://*.douyin.com/*',
+            '*://*.kuaishou.com/*',
+            '*://*.zhihu.com/*',
+            '*://*.taobao.com/*',
+            '*://*.tmall.com/*',
+            '*://*.jd.com/*',
+            '*://*.pinduoduo.com/*',
+            '*://*.1688.com/*',
+        ],
     };
 
     let observer = null;
@@ -56,15 +75,68 @@
     let edgeAuthPromise = null;
     let config = { ...DEFAULT_CONFIG };
 
+    function normalizeBlacklistEntry(entry) {
+        return String(entry || '').trim();
+    }
+
+    function sanitizeBlacklist(input) {
+        const values = Array.isArray(input) ? input : String(input || '').split(/\r?\n/);
+        const seen = new Set();
+        const result = [];
+
+        values.forEach((item) => {
+            const entry = normalizeBlacklistEntry(item);
+            if (!entry || entry.startsWith('#')) {
+                return;
+            }
+
+            if (!seen.has(entry)) {
+                seen.add(entry);
+                result.push(entry);
+            }
+        });
+
+        return result;
+    }
+
     function sanitizeConfig(input) {
         const next = { ...DEFAULT_CONFIG };
+        next.version = CONFIG_VERSION;
         if (input && (input.backend === 'edge' || input.backend === 'google')) {
             next.backend = input.backend;
         }
         if (input && typeof input.edgeFallbackToGoogle === 'boolean') {
             next.edgeFallbackToGoogle = input.edgeFallbackToGoogle;
         }
+        next.blacklist = sanitizeBlacklist(input && input.blacklist);
         return next;
+    }
+
+    function wildcardToRegExp(pattern) {
+        const escaped = pattern
+            .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '.*');
+        return new RegExp(`^${escaped}$`, 'i');
+    }
+
+    function isBlockedByBlacklist(url) {
+        const target = String(url || window.location.href);
+        return config.blacklist.some((pattern) => {
+            if (!pattern) {
+                return false;
+            }
+
+            // Support wildcard patterns and plain URL substring rules.
+            if (pattern.includes('*')) {
+                try {
+                    return wildcardToRegExp(pattern).test(target);
+                } catch (err) {
+                    return target.includes(pattern.replace(/\*/g, ''));
+                }
+            }
+
+            return target.includes(pattern);
+        });
     }
 
     function readConfig() {
@@ -266,6 +338,27 @@
         fallbackItem.appendChild(fallbackHelp);
         body.appendChild(fallbackItem);
 
+        const blacklistItem = doc.createElement('div');
+        blacklistItem.className = 'kt-config-item';
+
+        const blacklistLabel = doc.createElement('label');
+        blacklistLabel.className = 'kt-config-label';
+        blacklistLabel.textContent = '排除网址黑名单';
+        blacklistItem.appendChild(blacklistLabel);
+
+        const blacklistTextarea = doc.createElement('textarea');
+        blacklistTextarea.className = 'kt-config-select';
+        blacklistTextarea.style.minHeight = '180px';
+        blacklistTextarea.style.resize = 'vertical';
+        blacklistTextarea.value = config.blacklist.join('\n');
+        blacklistItem.appendChild(blacklistTextarea);
+
+        const blacklistHelp = doc.createElement('div');
+        blacklistHelp.className = 'kt-config-help';
+        blacklistHelp.textContent = '每行一个网址规则，支持 * 通配符。留空项和以 # 开头的行会被忽略。默认已包含常见中文站点与容易扰乱阅读的页面。';
+        blacklistItem.appendChild(blacklistHelp);
+        body.appendChild(blacklistItem);
+
         const footer = doc.createElement('div');
         footer.className = 'kt-config-footer';
         dialog.appendChild(footer);
@@ -312,6 +405,7 @@
         resetBtn.addEventListener('click', () => {
             backendSelect.value = DEFAULT_CONFIG.backend;
             fallbackCheckbox.checked = DEFAULT_CONFIG.edgeFallbackToGoogle;
+            blacklistTextarea.value = DEFAULT_CONFIG.blacklist.join('\n');
         });
 
         saveBtn.addEventListener('click', () => {
@@ -319,6 +413,7 @@
             const next = sanitizeConfig({
                 backend: backendSelect.value,
                 edgeFallbackToGoogle: !!fallbackCheckbox.checked,
+                blacklist: blacklistTextarea.value,
             });
 
             writeConfig(next);
@@ -353,6 +448,72 @@
         queue.get(phrase).add(rtNode);
     }
 
+    function isAsciiWordChar(char) {
+        return !!char && /[0-9A-Za-z_]/.test(char);
+    }
+
+    function isValidKatakanaPhrase(phrase) {
+        if (!phrase || phrase.length < MIN_PHRASE_LENGTH) {
+            return false;
+        }
+
+        // Ignore punctuation-like runs such as only prolonged sound marks.
+        if (/^[\u30FC\u30FB\u3099\u309A\uFF9E\uFF9F]+$/.test(phrase)) {
+            return false;
+        }
+
+        // Must contain at least one base katakana character.
+        return /[\u30A1-\u30FA\u30FD-\u30FF\uFF66-\uFF9D]/.test(phrase);
+    }
+
+    function findKatakanaMatch(text) {
+        if (!text || !QUICK_KATAKANA_RE.test(text)) {
+            return null;
+        }
+
+        KATAKANA_CANDIDATE_RE.lastIndex = 0;
+        let match;
+
+        while ((match = KATAKANA_CANDIDATE_RE.exec(text))) {
+            const phrase = match[0];
+            const index = match.index;
+
+            if (!isValidKatakanaPhrase(phrase)) {
+                continue;
+            }
+
+            const prev = index > 0 ? text[index - 1] : '';
+            const next = index + phrase.length < text.length ? text[index + phrase.length] : '';
+            if (isAsciiWordChar(prev) || isAsciiWordChar(next)) {
+                continue;
+            }
+
+            return { phrase, index };
+        }
+
+        return null;
+    }
+
+    function shouldSkipTextNode(textNode) {
+        const text = textNode.nodeValue || '';
+        if (!text.trim()) {
+            textNodeSnapshot.set(textNode, text);
+            return true;
+        }
+
+        const snapshot = textNodeSnapshot.get(textNode);
+        if (snapshot === text) {
+            return true;
+        }
+
+        if (!QUICK_KATAKANA_RE.test(text)) {
+            textNodeSnapshot.set(textNode, text);
+            return true;
+        }
+
+        return false;
+    }
+
     // Recursively traverse the given node and its descendants (Depth-first search)
     function scanTextNodes(node) {
         if (!doc.body || !node || !node.parentNode || !doc.body.contains(node)) {
@@ -370,6 +531,10 @@
         }
 
         if (node.nodeType === Node.TEXT_NODE) {
+            if (shouldSkipTextNode(node)) {
+                return;
+            }
+
             let current = node;
             while (current) {
                 current = addRuby(current);
@@ -381,12 +546,13 @@
     // Inspired by http://www.the-art-of-web.com/javascript/search-highlight/
     function addRuby(textNode) {
         const text = textNode.nodeValue;
-        const match = text ? KATAKANA_RE.exec(text) : null;
+        const match = findKatakanaMatch(text);
         if (!match) {
+            textNodeSnapshot.set(textNode, text || '');
             return null;
         }
 
-        const phrase = match[0];
+        const phrase = match.phrase;
         const ruby = doc.createElement('ruby');
         ruby.appendChild(doc.createTextNode(phrase));
 
@@ -732,6 +898,11 @@
         config = readConfig();
         registerConfigMenu();
         addStyle('rt.katakana-terminator-rt::before { content: attr(data-rt); }');
+
+        if (isBlockedByBlacklist(window.location.href)) {
+            console.info('Katakana Terminator: page is blacklisted, skip execution', window.location.href);
+            return;
+        }
 
         pendingNodes.add(doc.body);
         observer = new MutationObserver(mutationHandler);

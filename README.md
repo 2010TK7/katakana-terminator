@@ -16,14 +16,15 @@ https://greasyfork.org/zh-CN/scripts/575335
 	- Microsoft Edge 翻译后端（无密钥模式）
 	- Google 翻译后端
 4. 支持失败回退策略：Edge 请求失败可自动回退到 Google。
-5. 支持 Tampermonkey 图形化配置菜单：可切换后端与回退行为。
+5. 支持 Tampermonkey 图形化配置菜单：可切换后端、回退行为与排除网址黑名单。
 
 ## 本分支改动点
 
 1. 适配较新的 Tampermonkey API 用法与运行方式。
 2. 增加 Edge 翻译后端支持，并保留 Google 后端。
 3. 增加配置持久化与菜单弹窗（GUI）设置。
-4. 优化请求与缓存流程，减少重复请求。
+4. 增加可配置的排除网址黑名单，默认覆盖常见中文站点与容易被脚本干扰的页面。
+5. 优化请求与缓存流程，减少重复请求。
 
 ## 使用说明
 
@@ -32,7 +33,7 @@ https://greasyfork.org/zh-CN/scripts/575335
 	https://greasyfork.org/zh-CN/scripts/575335
 3. 或手动导入并启用 `katakana-terminator.user.js`。
 4. 在 Tampermonkey 菜单中打开“Katakana Terminator: 翻译设置”。
-5. 选择翻译后端并保存，设置会持久化生效。
+5. 选择翻译后端、回退策略和排除网址后保存，设置会持久化生效。
 
 ## 注意事项
 
@@ -40,6 +41,7 @@ https://greasyfork.org/zh-CN/scripts/575335
 2. Edge 无认证接口属于网页侧能力，稳定性可能随上游变化。
 3. Google 或 Edge 在不同网络环境下可用性不同。
 4. 该脚本会遍历文本节点，超大型动态页面可能带来额外性能开销。
+5. 默认黑名单已包含部分常见中文站点和容易被脚本干扰的页面；如需使用，可在设置里删除或修改。
 
 ## 原项目与作者
 
