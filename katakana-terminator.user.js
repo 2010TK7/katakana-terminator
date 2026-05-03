@@ -52,7 +52,6 @@
     const DEFAULT_CONFIG = {
         version: CONFIG_VERSION,
         backend: 'edge', // 'edge' | 'google'
-        edgeFallbackToGoogle: true,
         blacklist: [
             '*://*.bilibili.com/*',
             '*://*.weibo.com/*',
@@ -104,9 +103,6 @@
         next.version = CONFIG_VERSION;
         if (input && (input.backend === 'edge' || input.backend === 'google')) {
             next.backend = input.backend;
-        }
-        if (input && typeof input.edgeFallbackToGoogle === 'boolean') {
-            next.edgeFallbackToGoogle = input.edgeFallbackToGoogle;
         }
         next.blacklist = sanitizeBlacklist(input && input.blacklist);
         return next;
@@ -189,13 +185,26 @@
                 justify-content: center;
                 padding: 16px;
                 box-sizing: border-box;
+                --kt-config-bg: #ffffff;
+                --kt-config-fg: #1a1a1a;
+                --kt-config-surface: #fafcff;
+                --kt-config-border: #c9d3e3;
+                --kt-config-border-strong: #c7d2e0;
+                --kt-config-muted: #5b6b7f;
+                --kt-config-title: #2a3d57;
+                --kt-config-button-fg: #1f2b3a;
+                --kt-config-button-bg: #ffffff;
+                --kt-config-button-primary-bg: #2c6bed;
+                --kt-config-button-primary-fg: #ffffff;
+                --kt-config-shadow: rgba(0, 0, 0, 0.25);
+                --kt-config-header-gradient: linear-gradient(120deg, #f4f8ff, #f8fff5);
             }
             .kt-config-dialog {
                 width: min(560px, calc(100vw - 32px));
                 border-radius: 14px;
-                background: #fff;
-                color: #1a1a1a;
-                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+                background: var(--kt-config-bg);
+                color: var(--kt-config-fg);
+                box-shadow: 0 20px 60px var(--kt-config-shadow);
                 overflow: hidden;
                 font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
             }
@@ -203,8 +212,8 @@
                 padding: 16px 18px;
                 font-size: 17px;
                 font-weight: 600;
-                background: linear-gradient(120deg, #f4f8ff, #f8fff5);
-                border-bottom: 1px solid #e9eef5;
+                background: var(--kt-config-header-gradient);
+                border-bottom: 1px solid var(--kt-config-border);
             }
             .kt-config-body {
                 padding: 16px 18px;
@@ -218,21 +227,26 @@
             .kt-config-label {
                 font-size: 13px;
                 font-weight: 600;
-                color: #2a3d57;
+                color: var(--kt-config-title);
             }
             .kt-config-help {
                 font-size: 12px;
-                color: #5b6b7f;
+                color: var(--kt-config-muted);
                 line-height: 1.45;
             }
             .kt-config-select {
                 width: 100%;
                 box-sizing: border-box;
-                border: 1px solid #c9d3e3;
+                border: 1px solid var(--kt-config-border);
                 border-radius: 8px;
-                background: #fff;
+                background: var(--kt-config-bg);
+                color: var(--kt-config-fg);
                 padding: 8px 10px;
                 font-size: 14px;
+            }
+            .kt-config-select:focus {
+                outline: 2px solid rgba(44, 107, 237, 0.35);
+                outline-offset: 1px;
             }
             .kt-config-check-wrap {
                 display: flex;
@@ -245,27 +259,48 @@
                 display: flex;
                 justify-content: flex-end;
                 gap: 8px;
-                border-top: 1px solid #e9eef5;
-                background: #fafcff;
+                border-top: 1px solid var(--kt-config-border);
+                background: var(--kt-config-surface);
             }
             .kt-config-btn {
-                border: 1px solid #c7d2e0;
+                border: 1px solid var(--kt-config-border-strong);
                 border-radius: 8px;
                 padding: 7px 12px;
                 cursor: pointer;
                 font-size: 13px;
-                background: #fff;
-                color: #1f2b3a;
+                background: var(--kt-config-button-bg);
+                color: var(--kt-config-button-fg);
             }
             .kt-config-btn-primary {
-                border-color: #2c6bed;
-                background: #2c6bed;
-                color: #fff;
+                border-color: var(--kt-config-button-primary-bg);
+                background: var(--kt-config-button-primary-bg);
+                color: var(--kt-config-button-primary-fg);
             }
             .kt-config-note {
                 padding: 0 18px 14px;
                 font-size: 12px;
-                color: #5b6b7f;
+                color: var(--kt-config-muted);
+            }
+            @media (prefers-color-scheme: dark) {
+                .kt-config-overlay {
+                    background: rgba(0, 0, 0, 0.68);
+                    --kt-config-bg: #171a21;
+                    --kt-config-fg: #e8edf4;
+                    --kt-config-surface: #11151b;
+                    --kt-config-border: #334155;
+                    --kt-config-border-strong: #3b4758;
+                    --kt-config-muted: #9aa7b8;
+                    --kt-config-title: #d6e0ee;
+                    --kt-config-button-fg: #e8edf4;
+                    --kt-config-button-bg: #1d232e;
+                    --kt-config-button-primary-bg: #3b82f6;
+                    --kt-config-button-primary-fg: #ffffff;
+                    --kt-config-shadow: rgba(0, 0, 0, 0.55);
+                    --kt-config-header-gradient: linear-gradient(120deg, #1b2432, #182434);
+                }
+                .kt-config-select {
+                    color-scheme: dark;
+                }
             }
         `);
     }
@@ -319,24 +354,6 @@
         backendHelp.textContent = 'Edge 模式会自动获取临时 token；Google 模式直接使用公共接口。';
         backendItem.appendChild(backendHelp);
         body.appendChild(backendItem);
-
-        const fallbackItem = doc.createElement('div');
-        fallbackItem.className = 'kt-config-item';
-
-        const fallbackWrap = doc.createElement('label');
-        fallbackWrap.className = 'kt-config-check-wrap';
-        const fallbackCheckbox = doc.createElement('input');
-        fallbackCheckbox.type = 'checkbox';
-        fallbackCheckbox.checked = !!config.edgeFallbackToGoogle;
-        fallbackWrap.appendChild(fallbackCheckbox);
-        fallbackWrap.appendChild(doc.createTextNode('Edge 失败时自动回退到 Google'));
-        fallbackItem.appendChild(fallbackWrap);
-
-        const fallbackHelp = doc.createElement('div');
-        fallbackHelp.className = 'kt-config-help';
-        fallbackHelp.textContent = '仅在后端选择 Edge 时生效。';
-        fallbackItem.appendChild(fallbackHelp);
-        body.appendChild(fallbackItem);
 
         const blacklistItem = doc.createElement('div');
         blacklistItem.className = 'kt-config-item';
@@ -404,23 +421,16 @@
         cancelBtn.addEventListener('click', closeDialog);
         resetBtn.addEventListener('click', () => {
             backendSelect.value = DEFAULT_CONFIG.backend;
-            fallbackCheckbox.checked = DEFAULT_CONFIG.edgeFallbackToGoogle;
             blacklistTextarea.value = DEFAULT_CONFIG.blacklist.join('\n');
         });
 
         saveBtn.addEventListener('click', () => {
-            const prevBackend = config.backend;
             const next = sanitizeConfig({
                 backend: backendSelect.value,
-                edgeFallbackToGoogle: !!fallbackCheckbox.checked,
                 blacklist: blacklistTextarea.value,
             });
 
             writeConfig(next);
-
-            if (prevBackend !== next.backend && next.backend === 'edge') {
-                clearEdgeAuthToken();
-            }
 
             console.info('Katakana Terminator: config updated', next);
             closeDialog();
@@ -588,6 +598,23 @@
         queue.delete(phrase);
     }
 
+    function handleTranslationFailure(providerName, err, phrases) {
+        const message = err && err.message ? err.message : String(err || 'unknown error');
+        console.error(`Katakana Terminator: ${providerName} translation failed`, message, err);
+        phrases.forEach((phrase) => cache.delete(phrase));
+    }
+
+    const translationProviders = {
+        edge: {
+            name: 'Edge',
+            translate: edgeTranslate,
+        },
+        google: {
+            name: 'Google',
+            translate: googleTranslate,
+        },
+    };
+
     // Google Dictionary API, https://github.com/ssut/py-googletrans/issues/268
     function googleTranslate(srcLang, destLang, phrases) {
         // Prevent duplicate HTTP requests before the request completes
@@ -610,8 +637,7 @@
             url: api + buildQueryString(params),
             onload: (res) => {
                 if (res.status < 200 || res.status >= 300) {
-                    console.error('Katakana Terminator: request failed', res.status, res.statusText);
-                    phrases.forEach((phrase) => cache.delete(phrase));
+                    handleTranslationFailure('Google', new Error(`request failed: ${res.status} ${res.statusText}`), phrases);
                     return;
                 }
 
@@ -619,14 +645,12 @@
                 try {
                     resp = JSON.parse(res.responseText);
                 } catch (err) {
-                    console.error('Katakana Terminator: invalid response', res.responseText);
-                    phrases.forEach((phrase) => cache.delete(phrase));
+                    handleTranslationFailure('Google', new Error(`invalid response: ${res.responseText}`), phrases);
                     return;
                 }
 
                 if (!Array.isArray(resp) || !Array.isArray(resp[0])) {
-                    console.error('Katakana Terminator: unexpected response shape', resp);
-                    phrases.forEach((phrase) => cache.delete(phrase));
+                    handleTranslationFailure('Google', new Error(`unexpected response shape: ${JSON.stringify(resp)}`), phrases);
                     return;
                 }
 
@@ -648,8 +672,7 @@
                 });
             },
             onerror: (res) => {
-                console.error('Katakana Terminator: request error', res.statusText);
-                phrases.forEach((phrase) => cache.delete(phrase));
+                handleTranslationFailure('Google', new Error(`request error: ${res.statusText}`), phrases);
             },
         });
     }
@@ -763,18 +786,18 @@
             });
 
             if (res.status < 200 || res.status >= 300) {
-                throw new Error(`Edge translate failed: ${res.status} ${res.statusText}`);
+                throw new Error(`request failed: ${res.status} ${res.statusText}`);
             }
 
             let resp;
             try {
                 resp = JSON.parse(res.responseText);
             } catch (err) {
-                throw new Error('Edge translate returned invalid JSON');
+                throw new Error(`invalid JSON: ${res.responseText}`);
             }
 
             if (!Array.isArray(resp)) {
-                throw new Error('Edge translate returned unexpected response shape');
+                throw new Error(`unexpected response shape: ${JSON.stringify(resp)}`);
             }
 
             const translatedByIndex = resp.map((item) => {
@@ -789,29 +812,7 @@
             const token = await getEdgeAuthToken();
             await doTranslate(token);
         } catch (err) {
-            const message = String((err && err.message) || err || '');
-            const mayTokenBeExpired = /401|403|auth|token/i.test(message);
-
-            if (mayTokenBeExpired) {
-                try {
-                    clearEdgeAuthToken();
-                    const refreshedToken = await getEdgeAuthToken();
-                    await doTranslate(refreshedToken);
-                    return;
-                } catch (retryErr) {
-                    console.error('Katakana Terminator: Edge retry failed', retryErr);
-                }
-            } else {
-                console.error('Katakana Terminator: Edge request failed', err);
-            }
-
-            if (config.edgeFallbackToGoogle) {
-                phrases.forEach((phrase) => cache.delete(phrase));
-                googleTranslate(srcLang, destLang, phrases);
-                return;
-            }
-
-            phrases.forEach((phrase) => cache.delete(phrase));
+            handleTranslationFailure('Edge', err, phrases);
         }
     }
 
@@ -820,12 +821,13 @@
             return;
         }
 
-        if (config.backend === 'edge') {
-            edgeTranslate(srcLang, destLang, phrases);
+        const provider = translationProviders[config.backend];
+        if (!provider || typeof provider.translate !== 'function') {
+            handleTranslationFailure(config.backend || 'Unknown', new Error('unsupported translation backend'), phrases);
             return;
         }
 
-        googleTranslate(srcLang, destLang, phrases);
+        provider.translate(srcLang, destLang, phrases);
     }
 
     // Split word list into chunks to limit the length of API requests
