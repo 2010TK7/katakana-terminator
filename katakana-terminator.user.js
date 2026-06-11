@@ -21,7 +21,7 @@
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
 // @connect     api-edge.cognitive.microsofttranslator.com
-// @version     2026.04.28
+// @version     2026.06.11
 // @description:zh-CN 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
 // @description:ja ウェブページノニホンゴガイライゴノウエニエイゴゲンゴヲルビヒョウジ、オヨビカスタマイズカノウナジョガイURLブラックリスト
 // @description:en Convert Japanese loanwords (gairaigo) on web pages back to English with ruby annotations, with a configurable exclusion blacklist
@@ -53,17 +53,27 @@
         version: CONFIG_VERSION,
         backend: 'edge', // 'edge' | 'google'
         blacklist: [
-            '*://*.bilibili.com/*',
-            '*://*.weibo.com/*',
-            '*://*.xiaohongshu.com/*',
-            '*://*.douyin.com/*',
-            '*://*.kuaishou.com/*',
-            '*://*.zhihu.com/*',
-            '*://*.taobao.com/*',
-            '*://*.tmall.com/*',
-            '*://*.jd.com/*',
-            '*://*.pinduoduo.com/*',
-            '*://*.1688.com/*',
+            // Webmail — DOM manipulation in compose/editor areas may corrupt messages
+            '*://mail.qq.com/*',
+            '*://*.mail.163.com/*',
+            '*://*.mail.126.com/*',
+            '*://mail.sina.com.cn/*',
+            '*://mail.aliyun.com/*',
+            // Online office — editing surfaces are sensitive to DOM changes
+            '*://docs.qq.com/*',
+            '*://*.feishu.cn/*',
+            '*://*.larksuite.com/*',
+            '*://*.yuque.com/*',
+            '*://*.kdocs.cn/*',
+            // Chat — message integrity matters
+            '*://*.wx.qq.com/*',
+            '*://*.wechat.com/*',
+            '*://web.q.qq.com/*',
+            // Payment & finance — avoid any risk on sensitive pages
+            '*://*.alipay.com/*',
+            '*://*.tenpay.com/*',
+            '*://*.eastmoney.com/*',
+            '*://*.xueqiu.com/*',
         ],
     };
 
@@ -349,10 +359,6 @@
         backendSelect.value = config.backend;
         backendItem.appendChild(backendSelect);
 
-        const backendHelp = doc.createElement('div');
-        backendHelp.className = 'kt-config-help';
-        backendHelp.textContent = 'Edge 模式会自动获取临时 token；Google 模式直接使用公共接口。';
-        backendItem.appendChild(backendHelp);
         body.appendChild(backendItem);
 
         const blacklistItem = doc.createElement('div');
@@ -385,6 +391,11 @@
         resetBtn.className = 'kt-config-btn';
         resetBtn.textContent = '恢复默认';
 
+        const clearCacheBtn = doc.createElement('button');
+        clearCacheBtn.type = 'button';
+        clearCacheBtn.className = 'kt-config-btn';
+        clearCacheBtn.textContent = '清除缓存';
+
         const cancelBtn = doc.createElement('button');
         cancelBtn.type = 'button';
         cancelBtn.className = 'kt-config-btn';
@@ -396,6 +407,7 @@
         saveBtn.textContent = '保存';
 
         footer.appendChild(resetBtn);
+        footer.appendChild(clearCacheBtn);
         footer.appendChild(cancelBtn);
         footer.appendChild(saveBtn);
 
@@ -422,6 +434,12 @@
         resetBtn.addEventListener('click', () => {
             backendSelect.value = DEFAULT_CONFIG.backend;
             blacklistTextarea.value = DEFAULT_CONFIG.blacklist.join('\n');
+        });
+        clearCacheBtn.addEventListener('click', () => {
+            cache.clear();
+            console.info('Katakana Terminator: translation cache cleared');
+            clearCacheBtn.textContent = '已清除';
+            clearCacheBtn.disabled = true;
         });
 
         saveBtn.addEventListener('click', () => {
@@ -896,6 +914,29 @@
         translateTextNodes();
     }
 
+    function isBrowserTranslated() {
+        return doc.body && (
+            doc.body.classList.contains('translated-ltr') ||
+            doc.body.classList.contains('translated-rtl')
+        );
+    }
+
+    function stopForBrowserTranslation() {
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+
+        if (flushTimer !== null) {
+            window.clearTimeout(flushTimer);
+            flushTimer = null;
+        }
+
+        pendingNodes.clear();
+        queue.clear();
+        console.info('Katakana Terminator: browser translation detected, stop execution');
+    }
+
     function main() {
         config = readConfig();
         registerConfigMenu();
@@ -905,6 +946,19 @@
             console.info('Katakana Terminator: page is blacklisted, skip execution', window.location.href);
             return;
         }
+
+        if (isBrowserTranslated()) {
+            console.info('Katakana Terminator: browser translation already active, skip execution');
+            return;
+        }
+
+        const translationWatch = new MutationObserver(() => {
+            if (isBrowserTranslated()) {
+                translationWatch.disconnect();
+                stopForBrowserTranslation();
+            }
+        });
+        translationWatch.observe(doc.body, { attributes: true, attributeFilter: ['class'] });
 
         pendingNodes.add(doc.body);
         observer = new MutationObserver(mutationHandler);
