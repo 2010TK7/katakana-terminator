@@ -21,7 +21,7 @@
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
 // @connect     api-edge.cognitive.microsofttranslator.com
-// @version     2026.06.11
+// @version     2026.08.25
 // @description:zh-CN 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
 // @description:ja ウェブページノニホンゴガイライゴノウエニエイゴゲンゴヲルビヒョウジ、オヨビカスタマイズカノウナジョガイURLブラックリスト
 // @description:en Convert Japanese loanwords (gairaigo) on web pages back to English with ruby annotations, with a configurable exclusion blacklist
@@ -32,8 +32,8 @@
     'use strict';
 
     const doc = document;
-    const queue = new Map(); // phrase -> Set<rt>
-    const cache = new Map(); // phrase -> translated text | null (in-flight)
+    const queue = new Map(); // 短语 -> Set<rt>
+    const cache = new Map(); // 短语 -> 译文 | null（请求中）
     const pendingNodes = new Set();
     const textNodeSnapshot = new WeakMap();
 
@@ -51,25 +51,25 @@
     const CONFIG_VERSION = 2;
     const DEFAULT_CONFIG = {
         version: CONFIG_VERSION,
-        backend: 'edge', // 'edge' | 'google'
+        backend: 'edge', // 默认后端；合法取值来自 TRANSLATION_BACKENDS
         blacklist: [
-            // Webmail — DOM manipulation in compose/editor areas may corrupt messages
+            // 网页邮箱 —— 在写信/编辑器区域改动 DOM 可能损坏邮件
             '*://mail.qq.com/*',
             '*://*.mail.163.com/*',
             '*://*.mail.126.com/*',
             '*://mail.sina.com.cn/*',
             '*://mail.aliyun.com/*',
-            // Online office — editing surfaces are sensitive to DOM changes
+            // 在线办公 —— 编辑区域对 DOM 改动敏感
             '*://docs.qq.com/*',
             '*://*.feishu.cn/*',
             '*://*.larksuite.com/*',
             '*://*.yuque.com/*',
             '*://*.kdocs.cn/*',
-            // Chat — message integrity matters
+            // 即时通讯 —— 消息完整性重要
             '*://*.wx.qq.com/*',
             '*://*.wechat.com/*',
             '*://web.q.qq.com/*',
-            // Payment & finance — avoid any risk on sensitive pages
+            // 支付金融 —— 敏感页面避免任何风险
             '*://*.alipay.com/*',
             '*://*.tenpay.com/*',
             '*://*.eastmoney.com/*',
@@ -83,6 +83,257 @@
     let edgeAuthExpireAt = 0;
     let edgeAuthPromise = null;
     let config = { ...DEFAULT_CONFIG };
+    let originalHtmlLang = null;
+    let translationWatchers = [];
+    let dialogStyleInjected = false;
+
+    // {"keyA": 1, "keyB": 2} => "?keyA=1&keyB=2"
+    function buildQueryString(params) {
+        return `?${Object.keys(params).map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`).join('&')}`;
+    }
+
+    function trimEnd(text) {
+        return String(text).replace(/\s+$/, '');
+    }
+
+    function updateRubyByCachedTranslations(phrase) {
+        const translated = cache.get(phrase);
+        if (!translated) {
+            return;
+        }
+
+        const rtNodes = queue.get(phrase) || new Set();
+        rtNodes.forEach((node) => {
+            node.dataset.rt = translated;
+        });
+        queue.delete(phrase);
+    }
+
+    function handleTranslationFailure(providerName, err, phrases) {
+        const message = err && err.message ? err.message : String(err || '未知错误');
+        console.error(`Katakana Terminator: ${providerName} 翻译失败`, message, err);
+        phrases.forEach((phrase) => cache.delete(phrase));
+    }
+
+    function sendRequest(requestOptions) {
+        return new Promise((resolve, reject) => {
+            GM.xmlHttpRequest({
+                ...requestOptions,
+                onload: resolve,
+                onerror: reject,
+                onabort: reject,
+                ontimeout: reject,
+            });
+        });
+    }
+
+    function parseJwtExpireAt(token) {
+        try {
+            const payload = token.split('.')[1];
+            if (!payload) {
+                return Date.now() + 8 * 60 * 1000;
+            }
+
+            const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+            const decoded = JSON.parse(window.atob(normalized));
+            if (decoded && typeof decoded.exp === 'number') {
+                // 在服务端过期前略提前刷新 token
+                return decoded.exp * 1000 - 10 * 1000;
+            }
+        } catch (err) {
+            console.warn('Katakana Terminator: 解析 Edge token 过期时间失败', err);
+        }
+
+        return Date.now() + 8 * 60 * 1000;
+    }
+
+    async function getEdgeAuthToken() {
+        if (edgeAuthToken && Date.now() < edgeAuthExpireAt) {
+            return edgeAuthToken;
+        }
+
+        if (edgeAuthPromise) {
+            return edgeAuthPromise;
+        }
+
+        edgeAuthPromise = sendRequest({
+            method: 'GET',
+            url: 'https://edge.microsoft.com/translate/auth',
+        }).then((res) => {
+            if (res.status < 200 || res.status >= 300) {
+                throw new Error(`Edge 认证失败：${res.status} ${res.statusText}`);
+            }
+
+            const token = (res.responseText || '').trim();
+            if (!token) {
+                throw new Error('Edge 认证返回空 token');
+            }
+
+            edgeAuthToken = token;
+            edgeAuthExpireAt = parseJwtExpireAt(token);
+            return token;
+        }).finally(() => {
+            edgeAuthPromise = null;
+        });
+
+        return edgeAuthPromise;
+    }
+
+    function clearEdgeAuthToken() {
+        edgeAuthToken = null;
+        edgeAuthExpireAt = 0;
+    }
+
+    function applyTranslationsByIndex(phrases, translatedByIndex) {
+        phrases.forEach((phrase, index) => {
+            const translated = translatedByIndex[index];
+            if (!translated) {
+                cache.delete(phrase);
+                return;
+            }
+
+            cache.set(phrase, translated);
+            updateRubyByCachedTranslations(phrase);
+        });
+    }
+
+    // Provider 契约：raw translate(srcLang, destLang, phrases) 必须返回与 phrases
+    // 按索引对齐的译文数组（'' 表示无结果，可稍后重试），失败时抛出异常。
+    function createTranslationProvider({ name, label, translate }) {
+        return {
+            name,
+            label: label || name,
+            async translate(srcLang, destLang, phrases) {
+                // 请求完成前先标记在途，避免重复发起同一 HTTP 请求
+                phrases.forEach((phrase) => {
+                    cache.set(phrase, null);
+                });
+
+                try {
+                    const translatedByIndex = await translate(srcLang, destLang, phrases);
+                    applyTranslationsByIndex(phrases, translatedByIndex);
+                } catch (err) {
+                    handleTranslationFailure(name, err, phrases);
+                }
+            },
+        };
+    }
+
+    // Google 翻译接口，https://github.com/ssut/py-googletrans/issues/268
+    const translationProviders = {
+        edge: createTranslationProvider({
+            name: 'Edge',
+            label: 'Microsoft Edge (无密钥)',
+            translate: async (srcLang, destLang, phrases) => {
+                const endpoint = `https://api-edge.cognitive.microsofttranslator.com/translate${buildQueryString({
+                    'api-version': '3.0',
+                    from: srcLang,
+                    to: destLang,
+                    textType: 'plain',
+                })}`;
+
+                const requestBody = JSON.stringify(phrases.map((phrase) => ({ Text: phrase })));
+
+                const doTranslate = async (token) => {
+                    const res = await sendRequest({
+                        method: 'POST',
+                        url: endpoint,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            Authorization: `Bearer ${token}`,
+                        },
+                        data: requestBody,
+                    });
+
+                    if (res.status < 200 || res.status >= 300) {
+                        throw new Error(`请求失败：${res.status} ${res.statusText}`);
+                    }
+
+                    let resp;
+                    try {
+                        resp = JSON.parse(res.responseText);
+                    } catch (err) {
+                        throw new Error(`JSON 解析失败：${res.responseText}`);
+                    }
+
+                    if (!Array.isArray(resp)) {
+                        throw new Error(`响应结构异常：${JSON.stringify(resp)}`);
+                    }
+
+                    return resp.map((item) => {
+                        const translated = item && item.translations && item.translations[0] && item.translations[0].text;
+                        return translated ? trimEnd(translated) : '';
+                    });
+                };
+
+                try {
+                    const token = await getEdgeAuthToken();
+                    return await doTranslate(token);
+                } catch (err) {
+                    // 清除 token，下次请求会重新获取。
+                    // 否则被服务端拒绝（如 401）但本地估算尚未过期的 token 会被一直复用。
+                    clearEdgeAuthToken();
+                    throw err;
+                }
+            },
+        }),
+        google: createTranslationProvider({
+            name: 'Google',
+            label: 'Google Translate',
+            translate: (srcLang, destLang, phrases) => new Promise((resolve, reject) => {
+                const joinedText = trimEnd(phrases.join('\n'));
+                const api = 'https://translate.googleapis.com/translate_a/single';
+                const params = {
+                    client: 'gtx',
+                    dt: 't',
+                    sl: srcLang,
+                    tl: destLang,
+                    q: joinedText,
+                };
+
+                GM.xmlHttpRequest({
+                    method: 'GET',
+                    url: api + buildQueryString(params),
+                    onload: (res) => {
+                        if (res.status < 200 || res.status >= 300) {
+                            reject(new Error(`请求失败：${res.status} ${res.statusText}`));
+                            return;
+                        }
+
+                        let resp;
+                        try {
+                            resp = JSON.parse(res.responseText);
+                        } catch (err) {
+                            reject(new Error(`响应解析失败：${res.responseText}`));
+                            return;
+                        }
+
+                        if (!Array.isArray(resp) || !Array.isArray(resp[0])) {
+                            reject(new Error(`响应结构异常：${JSON.stringify(resp)}`));
+                            return;
+                        }
+
+                        const translatedByOriginal = new Map();
+                        resp[0].forEach((item) => {
+                            const translated = item && item[0] ? trimEnd(item[0]) : '';
+                            const original = item && item[1] ? trimEnd(item[1]) : '';
+                            if (original && translated) {
+                                translatedByOriginal.set(original, translated);
+                            }
+                        });
+
+                        resolve(phrases.map((phrase) => translatedByOriginal.get(phrase) || ''));
+                    },
+                    onerror: (res) => {
+                        reject(new Error(`请求出错：${res.statusText}`));
+                    },
+                });
+            }),
+        }),
+    };
+
+    // 合法后端 ID 的单一来源，配置校验依赖它
+    const TRANSLATION_BACKENDS = new Set(Object.keys(translationProviders));
 
     function normalizeBlacklistEntry(entry) {
         return String(entry || '').trim();
@@ -111,7 +362,7 @@
     function sanitizeConfig(input) {
         const next = { ...DEFAULT_CONFIG };
         next.version = CONFIG_VERSION;
-        if (input && (input.backend === 'edge' || input.backend === 'google')) {
+        if (input && TRANSLATION_BACKENDS.has(input.backend)) {
             next.backend = input.backend;
         }
         next.blacklist = sanitizeBlacklist(input && input.blacklist);
@@ -132,7 +383,7 @@
                 return false;
             }
 
-            // Support wildcard patterns and plain URL substring rules.
+            // 同时支持通配符规则与普通 URL 子串规则
             if (pattern.includes('*')) {
                 try {
                     return wildcardToRegExp(pattern).test(target);
@@ -154,7 +405,7 @@
             const raw = window.localStorage.getItem(CONFIG_KEY);
             return sanitizeConfig(raw ? JSON.parse(raw) : DEFAULT_CONFIG);
         } catch (err) {
-            console.warn('Katakana Terminator: failed to read config', err);
+            console.warn('Katakana Terminator: 读取配置失败', err);
             return { ...DEFAULT_CONFIG };
         }
     }
@@ -168,7 +419,7 @@
             try {
                 window.localStorage.setItem(CONFIG_KEY, JSON.stringify(safeConfig));
             } catch (err) {
-                console.warn('Katakana Terminator: failed to write config', err);
+                console.warn('Katakana Terminator: 写入配置失败', err);
             }
         }
 
@@ -184,6 +435,11 @@
     }
 
     function ensureDialogStyle() {
+        if (dialogStyleInjected) {
+            return;
+        }
+        dialogStyleInjected = true;
+
         addStyle(`
             .kt-config-overlay {
                 position: fixed;
@@ -195,62 +451,40 @@
                 justify-content: center;
                 padding: 16px;
                 box-sizing: border-box;
-                --kt-config-bg: #ffffff;
-                --kt-config-fg: #1a1a1a;
-                --kt-config-surface: #fafcff;
-                --kt-config-border: #c9d3e3;
-                --kt-config-border-strong: #c7d2e0;
-                --kt-config-muted: #5b6b7f;
-                --kt-config-title: #2a3d57;
-                --kt-config-button-fg: #1f2b3a;
-                --kt-config-button-bg: #ffffff;
-                --kt-config-button-primary-bg: #2c6bed;
-                --kt-config-button-primary-fg: #ffffff;
-                --kt-config-shadow: rgba(0, 0, 0, 0.25);
-                --kt-config-header-gradient: linear-gradient(120deg, #f4f8ff, #f8fff5);
+                font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+                --kt-bg: #fff;
+                --kt-fg: #1a1a1a;
+                --kt-muted: #5b6b7f;
+                --kt-border: #c9d3e3;
+                --kt-surface: #fafcff;
+                --kt-primary: #2c6bed;
             }
             .kt-config-dialog {
                 width: min(560px, calc(100vw - 32px));
                 border-radius: 14px;
-                background: var(--kt-config-bg);
-                color: var(--kt-config-fg);
-                box-shadow: 0 20px 60px var(--kt-config-shadow);
+                background: var(--kt-bg);
+                color: var(--kt-fg);
+                box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
                 overflow: hidden;
-                font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
             }
             .kt-config-header {
                 padding: 16px 18px;
                 font-size: 17px;
                 font-weight: 600;
-                background: var(--kt-config-header-gradient);
-                border-bottom: 1px solid var(--kt-config-border);
+                background: linear-gradient(120deg, #f4f8ff, #f8fff5);
+                border-bottom: 1px solid var(--kt-border);
             }
-            .kt-config-body {
-                padding: 16px 18px;
-                display: grid;
-                gap: 14px;
-            }
-            .kt-config-item {
-                display: grid;
-                gap: 8px;
-            }
-            .kt-config-label {
-                font-size: 13px;
-                font-weight: 600;
-                color: var(--kt-config-title);
-            }
-            .kt-config-help {
-                font-size: 12px;
-                color: var(--kt-config-muted);
-                line-height: 1.45;
-            }
+            .kt-config-body { padding: 16px 18px; display: grid; gap: 14px; }
+            .kt-config-item { display: grid; gap: 8px; }
+            .kt-config-label { font-size: 13px; font-weight: 600; }
+            .kt-config-help { font-size: 12px; color: var(--kt-muted); line-height: 1.45; }
             .kt-config-select {
                 width: 100%;
                 box-sizing: border-box;
-                border: 1px solid var(--kt-config-border);
+                border: 1px solid var(--kt-border);
                 border-radius: 8px;
-                background: var(--kt-config-bg);
-                color: var(--kt-config-fg);
+                background: var(--kt-bg);
+                color: var(--kt-fg);
                 padding: 8px 10px;
                 font-size: 14px;
             }
@@ -258,55 +492,41 @@
                 outline: 2px solid rgba(44, 107, 237, 0.35);
                 outline-offset: 1px;
             }
-            .kt-config-check-wrap {
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                font-size: 14px;
-            }
             .kt-config-footer {
                 padding: 12px 18px 16px;
                 display: flex;
                 justify-content: flex-end;
                 gap: 8px;
-                border-top: 1px solid var(--kt-config-border);
-                background: var(--kt-config-surface);
+                border-top: 1px solid var(--kt-border);
+                background: var(--kt-surface);
             }
             .kt-config-btn {
-                border: 1px solid var(--kt-config-border-strong);
+                border: 1px solid var(--kt-border);
                 border-radius: 8px;
                 padding: 7px 12px;
                 cursor: pointer;
                 font-size: 13px;
-                background: var(--kt-config-button-bg);
-                color: var(--kt-config-button-fg);
+                background: var(--kt-bg);
+                color: var(--kt-fg);
             }
             .kt-config-btn-primary {
-                border-color: var(--kt-config-button-primary-bg);
-                background: var(--kt-config-button-primary-bg);
-                color: var(--kt-config-button-primary-fg);
+                border-color: var(--kt-primary);
+                background: var(--kt-primary);
+                color: #fff;
             }
-            .kt-config-note {
-                padding: 0 18px 14px;
-                font-size: 12px;
-                color: var(--kt-config-muted);
-            }
+            .kt-config-note { padding: 0 18px 14px; font-size: 12px; color: var(--kt-muted); }
             @media (prefers-color-scheme: dark) {
                 .kt-config-overlay {
                     background: rgba(0, 0, 0, 0.68);
-                    --kt-config-bg: #171a21;
-                    --kt-config-fg: #e8edf4;
-                    --kt-config-surface: #11151b;
-                    --kt-config-border: #334155;
-                    --kt-config-border-strong: #3b4758;
-                    --kt-config-muted: #9aa7b8;
-                    --kt-config-title: #d6e0ee;
-                    --kt-config-button-fg: #e8edf4;
-                    --kt-config-button-bg: #1d232e;
-                    --kt-config-button-primary-bg: #3b82f6;
-                    --kt-config-button-primary-fg: #ffffff;
-                    --kt-config-shadow: rgba(0, 0, 0, 0.55);
-                    --kt-config-header-gradient: linear-gradient(120deg, #1b2432, #182434);
+                    --kt-bg: #171a21;
+                    --kt-fg: #e8edf4;
+                    --kt-muted: #9aa7b8;
+                    --kt-border: #334155;
+                    --kt-surface: #11151b;
+                    --kt-primary: #3b82f6;
+                }
+                .kt-config-header {
+                    background: linear-gradient(120deg, #1b2432, #182434);
                 }
                 .kt-config-select {
                     color-scheme: dark;
@@ -352,10 +572,9 @@
 
         const backendSelect = doc.createElement('select');
         backendSelect.className = 'kt-config-select';
-        backendSelect.innerHTML = [
-            '<option value="edge">Microsoft Edge (无密钥)</option>',
-            '<option value="google">Google Translate</option>',
-        ].join('');
+        backendSelect.innerHTML = Object.keys(translationProviders).map((id) => (
+            `<option value="${id}">${translationProviders[id].label}</option>`
+        )).join('');
         backendSelect.value = config.backend;
         backendItem.appendChild(backendSelect);
 
@@ -378,7 +597,7 @@
 
         const blacklistHelp = doc.createElement('div');
         blacklistHelp.className = 'kt-config-help';
-        blacklistHelp.textContent = '每行一个网址规则，支持 * 通配符。留空项和以 # 开头的行会被忽略。默认已包含常见中文站点与容易扰乱阅读的页面。';
+        blacklistHelp.textContent = '每行一个网址规则，支持 * 通配符。留空项和以 # 开头的行会被忽略。默认已包含邮箱、在线办公、即时通讯、支付金融等容易受脚本干扰的站点。';
         blacklistItem.appendChild(blacklistHelp);
         body.appendChild(blacklistItem);
 
@@ -437,7 +656,7 @@
         });
         clearCacheBtn.addEventListener('click', () => {
             cache.clear();
-            console.info('Katakana Terminator: translation cache cleared');
+            console.info('Katakana Terminator: 已清除翻译缓存');
             clearCacheBtn.textContent = '已清除';
             clearCacheBtn.disabled = true;
         });
@@ -450,7 +669,7 @@
 
             writeConfig(next);
 
-            console.info('Katakana Terminator: config updated', next);
+            console.info('Katakana Terminator: 配置已更新', next);
             closeDialog();
         });
 
@@ -485,12 +704,12 @@
             return false;
         }
 
-        // Ignore punctuation-like runs such as only prolonged sound marks.
+        // 忽略纯标点型片段，如只含长音符
         if (/^[\u30FC\u30FB\u3099\u309A\uFF9E\uFF9F]+$/.test(phrase)) {
             return false;
         }
 
-        // Must contain at least one base katakana character.
+        // 至少包含一个基础片假名字符
         return /[\u30A1-\u30FA\u30FD-\u30FF\uFF66-\uFF9D]/.test(phrase);
     }
 
@@ -542,7 +761,7 @@
         return false;
     }
 
-    // Recursively traverse the given node and its descendants (Depth-first search)
+    // 深度优先递归遍历节点及其后代
     function scanTextNodes(node) {
         if (!doc.body || !node || !node.parentNode || !doc.body.contains(node)) {
             return;
@@ -570,8 +789,8 @@
         }
     }
 
-    // Recursively add ruby tags to text nodes
-    // Inspired by http://www.the-art-of-web.com/javascript/search-highlight/
+    // 递归地为文本节点插入 ruby 标签
+    // 灵感来源：http://www.the-art-of-web.com/javascript/search-highlight/
     function addRuby(textNode) {
         const text = textNode.nodeValue;
         const match = findKatakanaMatch(text);
@@ -598,257 +817,15 @@
         return after;
     }
 
-    // {"keyA": 1, "keyB": 2} => "?keyA=1&keyB=2"
-    function buildQueryString(params) {
-        return `?${Object.keys(params).map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`).join('&')}`;
-    }
-
-    function updateRubyByCachedTranslations(phrase) {
-        const translated = cache.get(phrase);
-        if (!translated) {
-            return;
-        }
-
-        const rtNodes = queue.get(phrase) || [];
-        rtNodes.forEach((node) => {
-            node.dataset.rt = translated;
-        });
-        queue.delete(phrase);
-    }
-
-    function handleTranslationFailure(providerName, err, phrases) {
-        const message = err && err.message ? err.message : String(err || 'unknown error');
-        console.error(`Katakana Terminator: ${providerName} translation failed`, message, err);
-        phrases.forEach((phrase) => cache.delete(phrase));
-    }
-
-    const translationProviders = {
-        edge: {
-            name: 'Edge',
-            translate: edgeTranslate,
-        },
-        google: {
-            name: 'Google',
-            translate: googleTranslate,
-        },
-    };
-
-    // Google Dictionary API, https://github.com/ssut/py-googletrans/issues/268
-    function googleTranslate(srcLang, destLang, phrases) {
-        // Prevent duplicate HTTP requests before the request completes
-        phrases.forEach((phrase) => {
-            cache.set(phrase, null);
-        });
-
-        const joinedText = phrases.join('\n').replace(/\s+$/, '');
-        const api = 'https://translate.googleapis.com/translate_a/single';
-        const params = {
-            client: 'gtx',
-            dt: 't',
-            sl: srcLang,
-            tl: destLang,
-            q: joinedText,
-        };
-
-        GM.xmlHttpRequest({
-            method: 'GET',
-            url: api + buildQueryString(params),
-            onload: (res) => {
-                if (res.status < 200 || res.status >= 300) {
-                    handleTranslationFailure('Google', new Error(`request failed: ${res.status} ${res.statusText}`), phrases);
-                    return;
-                }
-
-                let resp;
-                try {
-                    resp = JSON.parse(res.responseText);
-                } catch (err) {
-                    handleTranslationFailure('Google', new Error(`invalid response: ${res.responseText}`), phrases);
-                    return;
-                }
-
-                if (!Array.isArray(resp) || !Array.isArray(resp[0])) {
-                    handleTranslationFailure('Google', new Error(`unexpected response shape: ${JSON.stringify(resp)}`), phrases);
-                    return;
-                }
-
-                resp[0].forEach((item) => {
-                    const translated = ((item && item[0]) || '').replace(/\s+$/, '');
-                    const original = ((item && item[1]) || '').replace(/\s+$/, '');
-                    if (!original) {
-                        return;
-                    }
-                    cache.set(original, translated);
-                    updateRubyByCachedTranslations(original);
-                });
-
-                // Retry later for phrases not returned by API.
-                phrases.forEach((phrase) => {
-                    if (cache.get(phrase) === null) {
-                        cache.delete(phrase);
-                    }
-                });
-            },
-            onerror: (res) => {
-                handleTranslationFailure('Google', new Error(`request error: ${res.statusText}`), phrases);
-            },
-        });
-    }
-
-    function sendRequest(requestOptions) {
-        return new Promise((resolve, reject) => {
-            GM.xmlHttpRequest({
-                ...requestOptions,
-                onload: resolve,
-                onerror: reject,
-                onabort: reject,
-                ontimeout: reject,
-            });
-        });
-    }
-
-    function parseJwtExpireAt(token) {
-        try {
-            const payload = token.split('.')[1];
-            if (!payload) {
-                return Date.now() + 8 * 60 * 1000;
-            }
-
-            const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
-            const decoded = JSON.parse(window.atob(normalized));
-            if (decoded && typeof decoded.exp === 'number') {
-                // Refresh the token slightly before the server-side expiry.
-                return decoded.exp * 1000 - 10 * 1000;
-            }
-        } catch (err) {
-            console.warn('Katakana Terminator: failed to parse Edge token expiry', err);
-        }
-
-        return Date.now() + 8 * 60 * 1000;
-    }
-
-    async function getEdgeAuthToken() {
-        if (edgeAuthToken && Date.now() < edgeAuthExpireAt) {
-            return edgeAuthToken;
-        }
-
-        if (edgeAuthPromise) {
-            return edgeAuthPromise;
-        }
-
-        edgeAuthPromise = sendRequest({
-            method: 'GET',
-            url: 'https://edge.microsoft.com/translate/auth',
-        }).then((res) => {
-            if (res.status < 200 || res.status >= 300) {
-                throw new Error(`Edge auth failed: ${res.status} ${res.statusText}`);
-            }
-
-            const token = (res.responseText || '').trim();
-            if (!token) {
-                throw new Error('Edge auth returned empty token');
-            }
-
-            edgeAuthToken = token;
-            edgeAuthExpireAt = parseJwtExpireAt(token);
-            return token;
-        }).finally(() => {
-            edgeAuthPromise = null;
-        });
-
-        return edgeAuthPromise;
-    }
-
-    function clearEdgeAuthToken() {
-        edgeAuthToken = null;
-        edgeAuthExpireAt = 0;
-    }
-
-    function applyTranslationsByIndex(phrases, translatedByIndex) {
-        phrases.forEach((phrase, index) => {
-            const translated = translatedByIndex[index];
-            if (!translated) {
-                cache.delete(phrase);
-                return;
-            }
-
-            cache.set(phrase, translated);
-            updateRubyByCachedTranslations(phrase);
-        });
-    }
-
-    async function edgeTranslate(srcLang, destLang, phrases) {
-        // Prevent duplicate HTTP requests before the request completes
-        phrases.forEach((phrase) => {
-            cache.set(phrase, null);
-        });
-
-        const endpoint = `https://api-edge.cognitive.microsofttranslator.com/translate${buildQueryString({
-            'api-version': '3.0',
-            from: srcLang,
-            to: destLang,
-            textType: 'plain',
-        })}`;
-
-        const requestBody = JSON.stringify(phrases.map((phrase) => ({ Text: phrase })));
-
-        const doTranslate = async (token) => {
-            const res = await sendRequest({
-                method: 'POST',
-                url: endpoint,
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
-                },
-                data: requestBody,
-            });
-
-            if (res.status < 200 || res.status >= 300) {
-                throw new Error(`request failed: ${res.status} ${res.statusText}`);
-            }
-
-            let resp;
-            try {
-                resp = JSON.parse(res.responseText);
-            } catch (err) {
-                throw new Error(`invalid JSON: ${res.responseText}`);
-            }
-
-            if (!Array.isArray(resp)) {
-                throw new Error(`unexpected response shape: ${JSON.stringify(resp)}`);
-            }
-
-            const translatedByIndex = resp.map((item) => {
-                const translated = item && item.translations && item.translations[0] && item.translations[0].text;
-                return translated ? String(translated).replace(/\s+$/, '') : '';
-            });
-
-            applyTranslationsByIndex(phrases, translatedByIndex);
-        };
-
-        try {
-            const token = await getEdgeAuthToken();
-            await doTranslate(token);
-        } catch (err) {
-            handleTranslationFailure('Edge', err, phrases);
-        }
-    }
-
     function requestTranslation(srcLang, destLang, phrases) {
         if (phrases.length === 0) {
             return;
         }
 
-        const provider = translationProviders[config.backend];
-        if (!provider || typeof provider.translate !== 'function') {
-            handleTranslationFailure(config.backend || 'Unknown', new Error('unsupported translation backend'), phrases);
-            return;
-        }
-
-        provider.translate(srcLang, destLang, phrases);
+        translationProviders[config.backend].translate(srcLang, destLang, phrases);
     }
 
-    // Split word list into chunks to limit the length of API requests
+    // 将短语分批发送，控制单个 API 请求的长度
     function translateTextNodes() {
         let apiRequestCount = 0;
         let phraseCount = 0;
@@ -875,7 +852,7 @@
         }
 
         if (phraseCount > 0) {
-            console.debug('Katakana Terminator:', phraseCount, 'phrases translated in', apiRequestCount, 'requests, frame', window.location.href);
+            console.debug('Katakana Terminator:', phraseCount, '个短语已翻译，共', apiRequestCount, '次请求，页面', window.location.href);
         }
     }
 
@@ -909,19 +886,35 @@
         const nodes = Array.from(pendingNodes);
         pendingNodes.clear();
 
-        console.debug('Katakana Terminator:', nodes.length, 'new nodes were added, frame', window.location.href);
+        console.debug('Katakana Terminator:', nodes.length, '个新增节点，页面', window.location.href);
         nodes.forEach(scanTextNodes);
         translateTextNodes();
     }
 
     function isBrowserTranslated() {
-        return doc.body && (
+        // Chrome/Edge：翻译后 body 会带上 translated-ltr/translated-rtl 类
+        if (doc.body && (
             doc.body.classList.contains('translated-ltr') ||
             doc.body.classList.contains('translated-rtl')
-        );
+        )) {
+            return true;
+        }
+
+        // Firefox：<html lang> 会被覆盖为译文语言
+        if (originalHtmlLang !== null) {
+            const currentLang = doc.documentElement.getAttribute('lang') || '';
+            if (currentLang !== originalHtmlLang) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     function stopForBrowserTranslation() {
+        translationWatchers.forEach((w) => w.disconnect());
+        translationWatchers = [];
+
         if (observer) {
             observer.disconnect();
             observer = null;
@@ -934,37 +927,66 @@
 
         pendingNodes.clear();
         queue.clear();
-        console.info('Katakana Terminator: browser translation detected, stop execution');
+        console.info('Katakana Terminator: 检测到浏览器翻译，停止执行');
     }
 
     function main() {
         config = readConfig();
         registerConfigMenu();
-        addStyle('rt.katakana-terminator-rt::before { content: attr(data-rt); }');
 
         if (isBlockedByBlacklist(window.location.href)) {
-            console.info('Katakana Terminator: page is blacklisted, skip execution', window.location.href);
+            console.info('Katakana Terminator: 页面已列入黑名单，跳过执行', window.location.href);
             return;
         }
+
+        // 记录原始 <html lang>，用于 Firefox 翻译检测。
+        // Firefox 开始翻译时会把它覆盖为译文语言。
+        originalHtmlLang = doc.documentElement.getAttribute('lang') || '';
 
         if (isBrowserTranslated()) {
-            console.info('Katakana Terminator: browser translation already active, skip execution');
+            console.info('Katakana Terminator: 浏览器翻译已激活，跳过执行');
             return;
         }
 
+        addStyle('rt.katakana-terminator-rt::before { content: attr(data-rt); }');
+
+        // Chrome/Edge：监听 body 上的 translated-ltr/translated-rtl 类
         const translationWatch = new MutationObserver(() => {
             if (isBrowserTranslated()) {
-                translationWatch.disconnect();
                 stopForBrowserTranslation();
             }
         });
         translationWatch.observe(doc.body, { attributes: true, attributeFilter: ['class'] });
+        translationWatchers.push(translationWatch);
+
+        // Firefox：监听 data-moz-translations-id（确定性信号，HTML 翻译）
+        // 与 <html lang> 变化（早期信号，适用于所有翻译类型）
+        const firefoxWatch = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.attributeName === 'data-moz-translations-id') {
+                    stopForBrowserTranslation();
+                    return;
+                }
+                if (mutation.attributeName === 'lang' && mutation.target === doc.documentElement) {
+                    if (isBrowserTranslated()) {
+                        stopForBrowserTranslation();
+                        return;
+                    }
+                }
+            }
+        });
+        firefoxWatch.observe(doc.documentElement, {
+            attributes: true,
+            subtree: true,
+            attributeFilter: ['data-moz-translations-id', 'lang'],
+        });
+        translationWatchers.push(firefoxWatch);
 
         pendingNodes.add(doc.body);
         observer = new MutationObserver(mutationHandler);
         observer.observe(doc.body, { childList: true, subtree: true });
 
-        // Initial scan
+        // 首次扫描
         rescanTextNodes();
     }
 
