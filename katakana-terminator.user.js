@@ -20,8 +20,7 @@
 // @grant       GM_setValue
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
-// @connect     api-edge.cognitive.microsofttranslator.com
-// @version     2026.08.25
+// @version     2026.08.27
 // @description:zh-CN 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
 // @description:ja ウェブページノニホンゴガイライゴノウエニエイゴゲンゴヲルビヒョウジ、オヨビカスタマイズカノウナジョガイURLブラックリスト
 // @description:en Convert Japanese loanwords (gairaigo) on web pages back to English with ruby annotations, with a configurable exclusion blacklist
@@ -79,9 +78,7 @@
 
     let observer = null;
     let flushTimer = null;
-    let edgeAuthToken = null;
-    let edgeAuthExpireAt = 0;
-    let edgeAuthPromise = null;
+    let translatorSession = null; // { session, sourceLanguage, targetLanguage }
     let config = { ...DEFAULT_CONFIG };
     let originalHtmlLang = null;
     let translationWatchers = [];
@@ -127,63 +124,6 @@
         });
     }
 
-    function parseJwtExpireAt(token) {
-        try {
-            const payload = token.split('.')[1];
-            if (!payload) {
-                return Date.now() + 8 * 60 * 1000;
-            }
-
-            const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
-            const decoded = JSON.parse(window.atob(normalized));
-            if (decoded && typeof decoded.exp === 'number') {
-                // 在服务端过期前略提前刷新 token
-                return decoded.exp * 1000 - 10 * 1000;
-            }
-        } catch (err) {
-            console.warn('Katakana Terminator: 解析 Edge token 过期时间失败', err);
-        }
-
-        return Date.now() + 8 * 60 * 1000;
-    }
-
-    async function getEdgeAuthToken() {
-        if (edgeAuthToken && Date.now() < edgeAuthExpireAt) {
-            return edgeAuthToken;
-        }
-
-        if (edgeAuthPromise) {
-            return edgeAuthPromise;
-        }
-
-        edgeAuthPromise = sendRequest({
-            method: 'GET',
-            url: 'https://edge.microsoft.com/translate/auth',
-        }).then((res) => {
-            if (res.status < 200 || res.status >= 300) {
-                throw new Error(`Edge 认证失败：${res.status} ${res.statusText}`);
-            }
-
-            const token = (res.responseText || '').trim();
-            if (!token) {
-                throw new Error('Edge 认证返回空 token');
-            }
-
-            edgeAuthToken = token;
-            edgeAuthExpireAt = parseJwtExpireAt(token);
-            return token;
-        }).finally(() => {
-            edgeAuthPromise = null;
-        });
-
-        return edgeAuthPromise;
-    }
-
-    function clearEdgeAuthToken() {
-        edgeAuthToken = null;
-        edgeAuthExpireAt = 0;
-    }
-
     function applyTranslationsByIndex(phrases, translatedByIndex) {
         phrases.forEach((phrase, index) => {
             const translated = translatedByIndex[index];
@@ -219,64 +159,85 @@
         };
     }
 
-    // Google 翻译接口，https://github.com/ssut/py-googletrans/issues/268
+    // Edge 内置 AI 的本地翻译 API，https://learn.microsoft.com/zh-cn/microsoft-edge/web-platform/translator-api
+    // 获取（或惰性创建）指定语言对的 Translator 会话；模型首次使用时需下载，之后常驻内存
+    function getTranslatorSession(srcLang, destLang) {
+        if (translatorSession && translatorSession.sourceLanguage === srcLang && translatorSession.targetLanguage === destLang) {
+            return translatorSession.session;
+        }
+
+        const sessionPromise = (async () => {
+            const availability = await Translator.availability({ sourceLanguage: srcLang, targetLanguage: destLang });
+            if (availability === 'unavailable') {
+                throw new Error(`当前浏览器不支持 Translator API（需要 Microsoft Edge 148+）：${srcLang} → ${destLang} 语言对不可用`);
+            }
+
+            return Translator.create({
+                sourceLanguage: srcLang,
+                targetLanguage: destLang,
+                monitor: (m) => {
+                    m.addEventListener('downloadprogress', (event) => {
+                        console.debug('Katakana Terminator: Translator 模型下载中', Math.round((event.loaded / event.total) * 100), '%');
+                    });
+                },
+            });
+        })().catch((err) => {
+            // 创建失败时清空缓存，允许下次请求重试
+            translatorSession = null;
+            throw err;
+        });
+
+        translatorSession = {
+            sourceLanguage: srcLang,
+            targetLanguage: destLang,
+            session: sessionPromise,
+        };
+        return sessionPromise;
+    }
+
     const translationProviders = {
         edge: createTranslationProvider({
             name: 'Edge',
             label: 'Microsoft Edge (无密钥)',
+            // Edge 免鉴权直调接口，https://www.ankio.net/research/technology/microsoft-edge-translate-api
             translate: async (srcLang, destLang, phrases) => {
-                const endpoint = `https://api-edge.cognitive.microsofttranslator.com/translate${buildQueryString({
-                    'api-version': '3.0',
+                const endpoint = `https://edge.microsoft.com/translate/translatetext${buildQueryString({
                     from: srcLang,
                     to: destLang,
-                    textType: 'plain',
+                    isEnterpriseClient: false,
                 })}`;
 
-                const requestBody = JSON.stringify(phrases.map((phrase) => ({ Text: phrase })));
+                const res = await sendRequest({
+                    method: 'POST',
+                    url: endpoint,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    data: JSON.stringify(phrases),
+                });
 
-                const doTranslate = async (token) => {
-                    const res = await sendRequest({
-                        method: 'POST',
-                        url: endpoint,
-                        headers: {
-                            'Content-Type': 'application/json',
-                            Authorization: `Bearer ${token}`,
-                        },
-                        data: requestBody,
-                    });
-
-                    if (res.status < 200 || res.status >= 300) {
-                        throw new Error(`请求失败：${res.status} ${res.statusText}`);
-                    }
-
-                    let resp;
-                    try {
-                        resp = JSON.parse(res.responseText);
-                    } catch (err) {
-                        throw new Error(`JSON 解析失败：${res.responseText}`);
-                    }
-
-                    if (!Array.isArray(resp)) {
-                        throw new Error(`响应结构异常：${JSON.stringify(resp)}`);
-                    }
-
-                    return resp.map((item) => {
-                        const translated = item && item.translations && item.translations[0] && item.translations[0].text;
-                        return translated ? trimEnd(translated) : '';
-                    });
-                };
-
-                try {
-                    const token = await getEdgeAuthToken();
-                    return await doTranslate(token);
-                } catch (err) {
-                    // 清除 token，下次请求会重新获取。
-                    // 否则被服务端拒绝（如 401）但本地估算尚未过期的 token 会被一直复用。
-                    clearEdgeAuthToken();
-                    throw err;
+                if (res.status < 200 || res.status >= 300) {
+                    throw new Error(`请求失败：${res.status} ${res.statusText}`);
                 }
+
+                let resp;
+                try {
+                    resp = JSON.parse(res.responseText);
+                } catch (err) {
+                    throw new Error(`JSON 解析失败：${res.responseText}`);
+                }
+
+                if (!Array.isArray(resp)) {
+                    throw new Error(`响应结构异常：${JSON.stringify(resp)}`);
+                }
+
+                return resp.map((item) => {
+                    const translated = item && item.translations && item.translations[0] && item.translations[0].text;
+                    return translated ? trimEnd(translated) : '';
+                });
             },
         }),
+        // Google 翻译接口，https://github.com/ssut/py-googletrans/issues/268
         google: createTranslationProvider({
             name: 'Google',
             label: 'Google Translate',
@@ -329,6 +290,19 @@
                     },
                 });
             }),
+        }),
+        translator: createTranslationProvider({
+            name: 'Translator',
+            label: 'Edge 内置 AI（离线）',
+            // 单个模型会话逐段翻译，无需网络请求；模型首次使用时自动下载
+            translate: async (srcLang, destLang, phrases) => {
+                if (typeof Translator === 'undefined') {
+                    throw new Error('当前浏览器不支持 Translator API（需要 Microsoft Edge 148+）');
+                }
+
+                const session = await getTranslatorSession(srcLang, destLang);
+                return Promise.all(phrases.map((phrase) => session.translate(phrase).then(trimEnd)));
+            },
         }),
     };
 
