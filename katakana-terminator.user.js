@@ -31,9 +31,225 @@
 (() => {
     'use strict';
 
+    /**
+     * Persistent LRU Cache with TTL support
+     */
+    class PersistentLRUCache {
+        constructor(maxSize, ttlDays) {
+            this.maxSize = maxSize;
+            this.ttlMs = ttlDays * 24 * 60 * 60 * 1000; // Convert days to milliseconds
+            this.cache = new Map();
+            this.saveTimer = null;
+            this.storageKey = 'translationCache';
+            this.hasGMSupport = typeof GM_getValue === 'function' && typeof GM_setValue === 'function';
+
+            // Load from storage
+            this._load();
+        }
+
+        /**
+         * Load cache from GM storage
+         */
+        _load() {
+            if (!this.hasGMSupport) {
+                console.debug('Katakana Terminator: GM storage not available, using memory-only cache');
+                return;
+            }
+
+            try {
+                const stored = GM_getValue(this.storageKey, null);
+                if (stored) {
+                    const data = JSON.parse(stored);
+                    // Restore Map from object
+                    Object.entries(data).forEach(([key, entry]) => {
+                        this.cache.set(key, entry);
+                    });
+                    console.debug('Katakana Terminator: Loaded', this.cache.size, 'cached translations from storage');
+                }
+            } catch (error) {
+                console.error('Katakana Terminator: Failed to load cache from storage', error);
+                this.cache.clear();
+            }
+        }
+
+        /**
+         * Save cache to GM storage (debounced)
+         */
+        _save() {
+            if (!this.hasGMSupport) return;
+
+            // Clear existing timer
+            if (this.saveTimer) {
+                clearTimeout(this.saveTimer);
+            }
+
+            // Schedule save after 1 second
+            this.saveTimer = setTimeout(() => {
+                this._flushSync();
+            }, 1000);
+        }
+
+        /**
+         * Immediately save cache to storage
+         */
+        _flushSync() {
+            if (!this.hasGMSupport) return;
+
+            try {
+                // Convert Map to plain object for JSON serialization
+                const data = {};
+                this.cache.forEach((entry, key) => {
+                    data[key] = entry;
+                });
+                GM_setValue(this.storageKey, JSON.stringify(data));
+            } catch (error) {
+                console.error('Katakana Terminator: Failed to save cache to storage', error);
+            }
+        }
+
+        /**
+         * Flush cache immediately (for beforeunload)
+         */
+        flush() {
+            if (this.saveTimer) {
+                clearTimeout(this.saveTimer);
+                this.saveTimer = null;
+            }
+            this._flushSync();
+        }
+
+        /**
+         * Check if entry is expired
+         */
+        _isExpired(entry) {
+            if (this.ttlMs === 0) return false; // Never expire
+            return Date.now() - entry.timestamp > this.ttlMs;
+        }
+
+        /**
+         * Prune expired entries
+         */
+        _pruneExpired() {
+            let prunedCount = 0;
+            for (const [key, entry] of this.cache.entries()) {
+                if (this._isExpired(entry)) {
+                    this.cache.delete(key);
+                    prunedCount++;
+                }
+            }
+            if (prunedCount > 0) {
+                console.debug('Katakana Terminator: Pruned', prunedCount, 'expired cache entries');
+                this._save();
+            }
+        }
+
+        /**
+         * Check if key exists and is not expired
+         */
+        has(key) {
+            const entry = this.cache.get(key);
+            if (!entry) return false;
+
+            if (this._isExpired(entry)) {
+                this.cache.delete(key);
+                this._save();
+                return false;
+            }
+
+            return true;
+        }
+
+        /**
+         * Get value by key
+         */
+        get(key) {
+            const entry = this.cache.get(key);
+            if (!entry) return undefined;
+
+            if (this._isExpired(entry)) {
+                this.cache.delete(key);
+                this._save();
+                return undefined;
+            }
+
+            // Update timestamp and move to end (LRU)
+            this.cache.delete(key);
+            entry.timestamp = Date.now();
+            this.cache.set(key, entry);
+
+            return entry.value;
+        }
+
+        /**
+         * Set value by key
+         */
+        set(key, value) {
+            // Remove if already exists (to update position)
+            if (this.cache.has(key)) {
+                this.cache.delete(key);
+            }
+
+            // Add new entry
+            this.cache.set(key, {
+                value: value,
+                timestamp: Date.now()
+            });
+
+            // Enforce size limit (remove oldest)
+            if (this.cache.size > this.maxSize) {
+                const firstKey = this.cache.keys().next().value;
+                this.cache.delete(firstKey);
+            }
+
+            this._save();
+        }
+
+        /**
+         * Delete entry by key
+         */
+        delete(key) {
+            const result = this.cache.delete(key);
+            if (result) {
+                this._save();
+            }
+            return result;
+        }
+
+        /**
+         * Clear all cache
+         */
+        clear() {
+            this.cache.clear();
+            this._flushSync();
+            console.debug('Katakana Terminator: Cache cleared');
+        }
+
+        /**
+         * Get cache statistics
+         */
+        getStats() {
+            let oldestTimestamp = Date.now();
+            let totalSize = 0;
+
+            this.cache.forEach((entry, key) => {
+                if (entry.timestamp < oldestTimestamp) {
+                    oldestTimestamp = entry.timestamp;
+                }
+                // Rough size estimation
+                totalSize += key.length + (entry.value ? entry.value.length : 0) + 20;
+            });
+
+            return {
+                count: this.cache.size,
+                size: totalSize,
+                oldestDate: this.cache.size > 0 ? new Date(oldestTimestamp).toLocaleString() : null
+            };
+        }
+    }
+
     const doc = document;
     const queue = new Map(); // 短语 -> Set<rt>
-    const cache = new Map(); // 短语 -> 译文 | null（请求中）
+    const cache = new PersistentLRUCache(10000, 90); // 短语 -> 译文 | null（请求中）
     const pendingNodes = new Set();
     const textNodeSnapshot = new WeakMap();
 
@@ -941,6 +1157,7 @@ Core Directives:
     function translateTextNodes() {
         let apiRequestCount = 0;
         let phraseCount = 0;
+        let cacheHitCount = 0;
         const chunk = [];
 
         for (const phrase of queue.keys()) {
@@ -948,6 +1165,7 @@ Core Directives:
 
             if (cache.has(phrase)) {
                 updateRubyByCachedTranslations(phrase);
+                cacheHitCount++;
                 continue;
             }
 
@@ -964,7 +1182,14 @@ Core Directives:
         }
 
         if (phraseCount > 0) {
-            console.debug('Katakana Terminator:', phraseCount, '个短语已翻译，共', apiRequestCount, '次请求，页面', window.location.href);
+            const stats = cache.getStats();
+            console.debug(
+                'Katakana Terminator:', phraseCount, '个短语已翻译，',
+                '共', cacheHitCount, '次缓存命中，', apiRequestCount, '次请求，',
+                '缓存：', stats.count + '/' + cache.maxSize,
+                '(' + (stats.size / 1024).toFixed(1) + ' KB)，',
+                '页面', window.location.href
+            );
         }
     }
 
@@ -1093,6 +1318,14 @@ Core Directives:
             attributeFilter: ['data-moz-translations-id', 'lang'],
         });
         translationWatchers.push(firefoxWatch);
+
+        // Prune expired cache entries on startup
+        cache._pruneExpired();
+
+        // Flush cache on page unload
+        window.addEventListener('beforeunload', () => {
+            cache.flush();
+        });
 
         pendingNodes.add(doc.body);
         observer = new MutationObserver(mutationHandler);
