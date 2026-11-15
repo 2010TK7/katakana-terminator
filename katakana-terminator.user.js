@@ -314,7 +314,7 @@
             translate: async (srcLang, destLang, phrases) => {
                 // Build prompt
                 const prompt = `
-Please restore the following Japanese katakana terms into their original language words (no explanations). Return only the corresponding original word and language code for each katakana, one per line:
+Please restore the following Japanese katakana terms into their original language words (no explanations). Return only the corresponding original word and language code for each katakana, one per line (response should not contain katakana terms):
 
 ${phrases.join('\n')}
 
