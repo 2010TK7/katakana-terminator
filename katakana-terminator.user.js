@@ -48,7 +48,7 @@
     const CHUNK_SIZE = 200;
     const RESCAN_DELAY_MS = 200;
     const CONFIG_KEY = 'katakana-terminator-config-v1';
-    const CONFIG_VERSION = 2.1;
+    const CONFIG_VERSION = 2.2;
     const DEFAULT_CONFIG = {
         version: CONFIG_VERSION,
         backend: 'edge', // 默认后端；合法取值来自 TRANSLATION_BACKENDS
@@ -75,9 +75,9 @@
             '*://*.eastmoney.com/*',
             '*://*.xueqiu.com/*',
         ],
-        geminiApiKey: '',     // Gemini API key
-        geminiApiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', // Gemini API endpoint
-        geminiModel: 'gemini-2.0-flash-lite',
+        aiApiKey: '',     // AI API key
+        aiApiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', // AI API endpoint
+        aiModel: 'gemini-2.5-flash-lite',
     };
 
     let observer = null;
@@ -308,37 +308,66 @@
                 return Promise.all(phrases.map((phrase) => session.translate(phrase).then(trimEnd)));
             },
         }),
-        gemini: createTranslationProvider({
-            name: 'Gemini',
-            label: 'Gemini API',
+        ai: createTranslationProvider({
+            name: 'AI',
+            label: 'AI API',
             translate: async (srcLang, destLang, phrases) => {
                 // Build prompt
                 const prompt = `
-Please restore the following Japanese katakana terms into their original language words (no explanations). Return only the corresponding original word and language code for each katakana, one per line (response should not contain katakana terms):
+Your task is to restore the following Japanese katakana terms to their original source language words or their Romaji representation.
 
+## Rules
+- For each katakana term, provide its original word or phrase from its source language.
+- If the term is a native Japanese word (e.g., onomatopoeia, emphasis), identify the language as Japanese ('ja') and output its Romaji transliteration.
+- If the term is an abbreviation, return the full original name.
+- Prepend each result with its ISO 639-1 language code followed by a colon and a space (e.g., 'en: ').
+- Return one result per line.
+- Do not include the original katakana, explanations, or any other text in your response.
+
+## Katakana Terms to Restore
 ${phrases.join('\n')}
 
-Example request and response format:
-Request:
+## Example Request and Response
+
+### Request:
 ストレス
 アルバイト
-Response:
+ブルアカ
+パソコン
+キラキラ
+ワクチン
+
+### Response:
 en: stress
-de: arbeit
+de: Arbeit
+en: Blue Archive
+en: personal computer
+ja: kirakira
+nl: vaccin
+`;
+                const systemPrompt = `
+You are a specialized linguistic AI assistant. Your sole purpose is to analyze Japanese katakana terms, identify their etymological origins, and return the original word or phrase in its source language.
+Core Directives:
+- **Identify Source Language**: You must accurately determine the source language (e.g., English, German, French, etc.).
+- **Handle Native Japanese Words**: If a katakana term represents a native Japanese word (e.g., onomatopoeia, for emphasis), you must identify the language as Japanese ('ja') and provide its standard Romaji transliteration.
+- **Handle Abbreviations**: You are an expert at recognizing katakana abbreviations (e.g.,「パソコン」,「ブルアカ」) and must return the full, original term (e.g., "personal computer", "Blue Archive"), not the expanded katakana.
+- **Strict Output Format**: Your response must strictly adhere to the format '[ISO 639-1 code]: [Original Word/Phrase/Romaji]'.
+- **No Extra Information**: You must NOT provide any explanations, Japanese translations, katakana terms, or any other text outside of the requested output. Your response should be clean data.
+- **Precision**: Maintain original capitalization for proper nouns, acronyms, or language-specific rules (e.g., German nouns).
 `;
 
                 // Make API request
                 const response = await sendRequest({
                     method: "POST",
-                    url: config.geminiApiEndpoint,
+                    url: config.aiApiEndpoint,
                     headers: {
                         "Content-Type": "application/json",
-                        "Authorization": `Bearer ${config.geminiApiKey}`
+                        "Authorization": `Bearer ${config.aiApiKey}`
                     },
                     data: JSON.stringify({
-                        model: config.geminiModel,
+                        model: config.aiModel,
                         messages: [
-                            { role: "system", content: "You are a multilingual scholar." },
+                            { role: "system", content: systemPrompt },
                             { role: "user", content: prompt }
                         ],
                     })
@@ -356,10 +385,14 @@ de: arbeit
                     if (lines.length === phrases.length) {
                         return phrases.map((phrase, index) => lines[index].trim());
                     } else {
-                        throw new Error('Gemini response does not match input count');
+                        console.debug(prompt);
+                        console.debug(content);
+                        throw new Error('AI response does not match input count');
                     }
                 } else {
-                    throw new Error('Invalid Gemini response format');
+                    console.debug(prompt);
+                    console.debug(data);
+                    throw new Error('Invalid AI response format');
                 }
             },
         }),
@@ -398,7 +431,7 @@ de: arbeit
         if (input && TRANSLATION_BACKENDS.has(input.backend)) {
             next.backend = input.backend;
         }
-        for (const key of ['geminiApiEndpoint', 'geminiModel', 'geminiApiKey']) {
+        for (const key of ['aiApiEndpoint', 'aiModel', 'aiApiKey']) {
             if (input && typeof input[key] === 'string') {
                 next[key] = input[key];
             }
@@ -618,15 +651,15 @@ de: arbeit
 
         body.appendChild(backendItem);
 
-        const geminiSettings = doc.createElement('div');
-        geminiSettings.id = 'gemini-settings';
-        geminiSettings.style.display = backendSelect.value === 'gemini' ? 'block' : 'none';
-        body.appendChild(geminiSettings);
+        const aiSettings = doc.createElement('div');
+        aiSettings.id = 'ai-settings';
+        aiSettings.style.display = backendSelect.value === 'ai' ? 'block' : 'none';
+        body.appendChild(aiSettings);
 
         for (const [name, id, key] of [
-            ['API Endpoint (OpenAI-compatible):', 'kt-gemini-endpoint', 'geminiApiEndpoint'],
-            ['Model:', 'kt-gemini-model', 'geminiModel'],
-            ['Enter your API key', 'kt-gemini-key', 'geminiApiKey'],
+            ['API Endpoint (OpenAI-compatible):', 'kt-ai-endpoint', 'aiApiEndpoint'],
+            ['Model:', 'kt-ai-model', 'aiModel'],
+            ['Enter your API key', 'kt-ai-key', 'aiApiKey'],
         ]) {
             const item = doc.createElement('div');
             item.className = 'kt-config-item';
@@ -638,12 +671,12 @@ de: arbeit
 
             const input = doc.createElement('input');
             input.id = id;
-            input.type = key === 'geminiApiKey' ? 'password' : 'text';
+            input.type = key === 'aiApiKey' ? 'password' : 'text';
             input.className = 'kt-config-select';
             input.value = config[key];
             item.appendChild(input);
 
-            geminiSettings.appendChild(item);
+            aiSettings.appendChild(item);
         }
 
         const blacklistItem = doc.createElement('div');
@@ -716,15 +749,15 @@ de: arbeit
         });
 
         backendSelect.addEventListener('change', () => {
-            geminiSettings.style.display = backendSelect.value === 'gemini' ? 'block' : 'none';
+            aiSettings.style.display = backendSelect.value === 'ai' ? 'block' : 'none';
         });
         cancelBtn.addEventListener('click', closeDialog);
         resetBtn.addEventListener('click', () => {
             backendSelect.value = DEFAULT_CONFIG.backend;
-            geminiSettings.style.display = backendSelect.value === 'gemini' ? 'block' : 'none';
-            geminiSettings.querySelector('#kt-gemini-endpoint').value = DEFAULT_CONFIG.geminiApiEndpoint;
-            geminiSettings.querySelector('#kt-gemini-model').value = DEFAULT_CONFIG.geminiModel;
-            geminiSettings.querySelector('#kt-gemini-key').value = DEFAULT_CONFIG.geminiApiKey;
+            aiSettings.style.display = backendSelect.value === 'ai' ? 'block' : 'none';
+            aiSettings.querySelector('#kt-ai-endpoint').value = DEFAULT_CONFIG.aiApiEndpoint;
+            aiSettings.querySelector('#kt-ai-model').value = DEFAULT_CONFIG.aiModel;
+            aiSettings.querySelector('#kt-ai-key').value = DEFAULT_CONFIG.aiApiKey;
             blacklistTextarea.value = DEFAULT_CONFIG.blacklist.join('\n');
         });
         clearCacheBtn.addEventListener('click', () => {
@@ -737,9 +770,9 @@ de: arbeit
         saveBtn.addEventListener('click', () => {
             const next = sanitizeConfig({
                 backend: backendSelect.value,
-                geminiApiEndpoint: geminiSettings.querySelector('#kt-gemini-endpoint').value,
-                geminiModel: geminiSettings.querySelector('#kt-gemini-model').value,
-                geminiApiKey: geminiSettings.querySelector('#kt-gemini-key').value,
+                aiApiEndpoint: aiSettings.querySelector('#kt-ai-endpoint').value,
+                aiModel: aiSettings.querySelector('#kt-ai-model').value,
+                aiApiKey: aiSettings.querySelector('#kt-ai-key').value,
                 blacklist: blacklistTextarea.value,
             });
 
@@ -747,7 +780,7 @@ de: arbeit
 
             console.info('Katakana Terminator: 配置已更新', {
                 ...next,
-                geminiApiKey: '*'.repeat(next.geminiApiKey.length),
+                aiApiKey: '*'.repeat(next.aiApiKey.length),
             });
             closeDialog();
         });
