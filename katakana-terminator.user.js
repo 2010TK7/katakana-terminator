@@ -60,9 +60,11 @@
                 const stored = GM_getValue(this.storageKey, null);
                 if (stored) {
                     const data = JSON.parse(stored);
-                    // Restore Map from object
+                    // Restore Map from object, skip null values
                     Object.entries(data).forEach(([key, entry]) => {
-                        this.cache.set(key, entry);
+                        if (entry.value !== null) {
+                            this.cache.set(key, entry);
+                        }
                     });
                     console.debug('Katakana Terminator: Loaded', this.cache.size, 'cached translations from storage');
                 }
@@ -90,18 +92,42 @@
         }
 
         /**
-         * Immediately save cache to storage
+         * Immediately save cache to storage (merge with remote data to avoid overwriting)
          */
         _flushSync() {
             if (!this.hasGMSupport) return;
 
             try {
-                // Convert Map to plain object for JSON serialization
-                const data = {};
+                // Read current storage data
+                const stored = GM_getValue(this.storageKey, null);
+                const merged = {};
+
+                // Load remote data first
+                if (stored) {
+                    try {
+                        const remoteData = JSON.parse(stored);
+                        Object.entries(remoteData).forEach(([key, entry]) => {
+                            if (entry.value !== null) {
+                                merged[key] = entry;
+                            }
+                        });
+                    } catch (parseError) {
+                        console.error('Katakana Terminator: Failed to parse remote cache', parseError);
+                    }
+                }
+
+                // Merge local cache (newer entries overwrite older ones)
                 this.cache.forEach((entry, key) => {
-                    data[key] = entry;
+                    if (entry.value !== null) {
+                        const existing = merged[key];
+                        if (!existing || entry.timestamp >= existing.timestamp) {
+                            merged[key] = entry;
+                        }
+                    }
                 });
-                GM_setValue(this.storageKey, JSON.stringify(data));
+
+                // Write merged data
+                GM_setValue(this.storageKey, JSON.stringify(merged));
             } catch (error) {
                 console.error('Katakana Terminator: Failed to save cache to storage', error);
             }
