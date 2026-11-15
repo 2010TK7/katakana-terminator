@@ -4,7 +4,7 @@
 // @name:en     Katakana Terminator
 // @name:ko-KR  가타카나 터미네이터
 // @description 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
-// @author      Arnie97, Leimeng52mc
+// @author      Arnie97, Leimeng52mc, Izumiko
 // @license     MIT
 // @copyright   2017-2026, Katakana Terminator Contributors (https://github.com/Leimeng52mc/katakana-terminator/graphs/contributors)
 // @namespace   https://github.com/Leimeng52mc
@@ -20,6 +20,7 @@
 // @grant       GM_setValue
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
+// @connect     *
 // @version     2026.08.27
 // @description:zh-CN 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
 // @description:ja ウェブページノニホンゴガイライゴノウエニエイゴゲンゴヲルビヒョウジ、オヨビカスタマイズカノウナジョガイURLブラックリスト
@@ -47,7 +48,7 @@
     const CHUNK_SIZE = 200;
     const RESCAN_DELAY_MS = 200;
     const CONFIG_KEY = 'katakana-terminator-config-v1';
-    const CONFIG_VERSION = 2;
+    const CONFIG_VERSION = 2.1;
     const DEFAULT_CONFIG = {
         version: CONFIG_VERSION,
         backend: 'edge', // 默认后端；合法取值来自 TRANSLATION_BACKENDS
@@ -74,6 +75,9 @@
             '*://*.eastmoney.com/*',
             '*://*.xueqiu.com/*',
         ],
+        geminiApiKey: '',     // Gemini API key
+        geminiApiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', // Gemini API endpoint
+        geminiModel: 'gemini-2.0-flash-lite',
     };
 
     let observer = null;
@@ -304,6 +308,61 @@
                 return Promise.all(phrases.map((phrase) => session.translate(phrase).then(trimEnd)));
             },
         }),
+        gemini: createTranslationProvider({
+            name: 'Gemini',
+            label: 'Gemini API',
+            translate: async (srcLang, destLang, phrases) => {
+                // Build prompt
+                const prompt = `
+Please restore the following Japanese katakana terms into their original language words (no explanations). Return only the corresponding original word and language code for each katakana, one per line:
+
+${phrases.join('\n')}
+
+Example request and response format:
+Request:
+ストレス
+アルバイト
+Response:
+en: stress
+de: arbeit
+`;
+
+                // Make API request
+                const response = await sendRequest({
+                    method: "POST",
+                    url: config.geminiApiEndpoint,
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${config.geminiApiKey}`
+                    },
+                    data: JSON.stringify({
+                        model: config.geminiModel,
+                        messages: [
+                            { role: "system", content: "You are a multilingual scholar." },
+                            { role: "user", content: prompt }
+                        ],
+                    })
+                });
+
+                const data = JSON.parse(response.responseText);
+
+                if (data.choices && data.choices[0] && data.choices[0].message) {
+                    const content = data.choices[0].message.content;
+
+                    // Split response into lines
+                    const lines = content.trim().split('\n');
+
+                    // Ensure line count matches phrase count
+                    if (lines.length === phrases.length) {
+                        return phrases.map((phrase, index) => lines[index].trim());
+                    } else {
+                        throw new Error('Gemini response does not match input count');
+                    }
+                } else {
+                    throw new Error('Invalid Gemini response format');
+                }
+            },
+        }),
     };
 
     // 合法后端 ID 的单一来源，配置校验依赖它
@@ -338,6 +397,11 @@
         next.version = CONFIG_VERSION;
         if (input && TRANSLATION_BACKENDS.has(input.backend)) {
             next.backend = input.backend;
+        }
+        for (const key of ['geminiApiEndpoint', 'geminiModel', 'geminiApiKey']) {
+            if (input && typeof input[key] === 'string') {
+                next[key] = input[key];
+            }
         }
         next.blacklist = sanitizeBlacklist(input && input.blacklist);
         return next;
@@ -554,6 +618,34 @@
 
         body.appendChild(backendItem);
 
+        const geminiSettings = doc.createElement('div');
+        geminiSettings.id = 'gemini-settings';
+        geminiSettings.style.display = backendSelect.value === 'gemini' ? 'block' : 'none';
+        body.appendChild(geminiSettings);
+
+        for (const [name, id, key] of [
+            ['API Endpoint (OpenAI-compatible):', 'kt-gemini-endpoint', 'geminiApiEndpoint'],
+            ['Model:', 'kt-gemini-model', 'geminiModel'],
+            ['Enter your API key', 'kt-gemini-key', 'geminiApiKey'],
+        ]) {
+            const item = doc.createElement('div');
+            item.className = 'kt-config-item';
+
+            const label = doc.createElement('label');
+            label.className = 'kt-config-label';
+            label.textContent = name;
+            item.appendChild(label);
+
+            const input = doc.createElement('input');
+            input.id = id;
+            input.type = key === 'geminiApiKey' ? 'password' : 'text';
+            input.className = 'kt-config-select';
+            input.value = config[key];
+            item.appendChild(input);
+
+            geminiSettings.appendChild(item);
+        }
+
         const blacklistItem = doc.createElement('div');
         blacklistItem.className = 'kt-config-item';
 
@@ -623,9 +715,16 @@
             event.stopPropagation();
         });
 
+        backendSelect.addEventListener('change', () => {
+            geminiSettings.style.display = backendSelect.value === 'gemini' ? 'block' : 'none';
+        });
         cancelBtn.addEventListener('click', closeDialog);
         resetBtn.addEventListener('click', () => {
             backendSelect.value = DEFAULT_CONFIG.backend;
+            geminiSettings.style.display = backendSelect.value === 'gemini' ? 'block' : 'none';
+            geminiSettings.querySelector('#kt-gemini-endpoint').value = DEFAULT_CONFIG.geminiApiEndpoint;
+            geminiSettings.querySelector('#kt-gemini-model').value = DEFAULT_CONFIG.geminiModel;
+            geminiSettings.querySelector('#kt-gemini-key').value = DEFAULT_CONFIG.geminiApiKey;
             blacklistTextarea.value = DEFAULT_CONFIG.blacklist.join('\n');
         });
         clearCacheBtn.addEventListener('click', () => {
@@ -638,12 +737,18 @@
         saveBtn.addEventListener('click', () => {
             const next = sanitizeConfig({
                 backend: backendSelect.value,
+                geminiApiEndpoint: geminiSettings.querySelector('#kt-gemini-endpoint').value,
+                geminiModel: geminiSettings.querySelector('#kt-gemini-model').value,
+                geminiApiKey: geminiSettings.querySelector('#kt-gemini-key').value,
                 blacklist: blacklistTextarea.value,
             });
 
             writeConfig(next);
 
-            console.info('Katakana Terminator: 配置已更新', next);
+            console.info('Katakana Terminator: 配置已更新', {
+                ...next,
+                geminiApiKey: '*'.repeat(next.geminiApiKey.length),
+            });
             closeDialog();
         });
 
