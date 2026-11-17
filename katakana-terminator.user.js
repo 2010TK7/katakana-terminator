@@ -69,7 +69,7 @@ class PersistentLRUCache {
                 const data = JSON.parse(stored);
                 // Restore Map from object, skip null values
                 Object.entries(data).forEach(([key, entry]) => {
-                    if (entry.value !== null) {
+                    if (entry.value !== null && !this._isExpired(entry)) {
                         this.cache.set(key, entry);
                     }
                 });
@@ -114,7 +114,7 @@ class PersistentLRUCache {
                 try {
                     const remoteData = JSON.parse(stored);
                     Object.entries(remoteData).forEach(([key, entry]) => {
-                        if (entry.value !== null) {
+                        if (entry.value !== null && !this._isExpired(entry)) {
                             merged[key] = entry;
                         }
                     });
@@ -125,7 +125,7 @@ class PersistentLRUCache {
             
             // Merge local cache (newer entries overwrite older ones)
             this.cache.forEach((entry, key) => {
-                if (entry.value !== null) {
+                if (entry.value !== null && !this._isExpired(entry)) {
                     const existing = merged[key];
                     if (!existing || entry.timestamp >= existing.timestamp) {
                         merged[key] = entry;
