@@ -4,7 +4,7 @@
 // @name:en     Katakana Terminator
 // @name:ko-KR  가타카나 터미네이터
 // @description 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
-// @author      Arnie97, Leimeng52mc, Izumiko
+// @author      Arnie97, Leimeng52mc, Izumiko, 2010TK7
 // @license     MIT
 // @copyright   2017-2026, Katakana Terminator Contributors (https://github.com/Leimeng52mc/katakana-terminator/graphs/contributors)
 // @namespace   https://github.com/Leimeng52mc
@@ -18,6 +18,8 @@
 // @grant       GM_registerMenuCommand
 // @grant       GM_getValue
 // @grant       GM_setValue
+// @grant       GM_deleteValue
+// @grant       GM_addValueChangeListener
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
 // @connect     *
@@ -45,6 +47,34 @@
 
             // Load from storage
             this._load();
+
+            if (typeof GM_addValueChangeListener === 'function') {
+                GM_addValueChangeListener(this.storageKey, (name, old_value, new_value, remote) => {
+                    if (name !== this.storageKey || !remote) {
+                        return;
+                    }
+                    if (!new_value) {
+                        this.cache.clear();
+                        return;
+                    }
+                    try {
+                        const data = JSON.parse(new_value);
+                        Object.entries(data).forEach(([key, entry]) => {
+                            if (entry.value !== null && !this._isExpired(entry)) {
+                                const existing = this.cache.get(key);
+                                if (!existing || entry.timestamp >= existing.timestamp) {
+                                    if (existing) {
+                                        this.cache.delete(key);
+                                    }
+                                    this.cache.set(key, entry);
+                                }
+                            }
+                        });
+                    } catch (parseError) {
+                        console.error('Katakana Terminator: Failed to parse remote cache', parseError);
+                    }
+                });
+            }
         }
 
         /**
@@ -62,7 +92,7 @@
                     const data = JSON.parse(stored);
                     // Restore Map from object, skip null values
                     Object.entries(data).forEach(([key, entry]) => {
-                        if (entry.value !== null) {
+                        if (entry.value !== null && !this._isExpired(entry)) {
                             this.cache.set(key, entry);
                         }
                     });
@@ -107,7 +137,7 @@
                     try {
                         const remoteData = JSON.parse(stored);
                         Object.entries(remoteData).forEach(([key, entry]) => {
-                            if (entry.value !== null) {
+                            if (entry.value !== null && !this._isExpired(entry)) {
                                 merged[key] = entry;
                             }
                         });
@@ -118,7 +148,7 @@
 
                 // Merge local cache (newer entries overwrite older ones)
                 this.cache.forEach((entry, key) => {
-                    if (entry.value !== null) {
+                    if (entry.value !== null && !this._isExpired(entry)) {
                         const existing = merged[key];
                         if (!existing || entry.timestamp >= existing.timestamp) {
                             merged[key] = entry;
@@ -126,8 +156,12 @@
                     }
                 });
 
+                const sorted = Object.entries(merged)
+                    .sort((a, b) => a[1].timestamp - b[1].timestamp)
+                    .slice(-this.maxSize);
+
                 // Write merged data
-                GM_setValue(this.storageKey, JSON.stringify(merged));
+                GM_setValue(this.storageKey, JSON.stringify(Object.fromEntries(sorted)));
             } catch (error) {
                 console.error('Katakana Terminator: Failed to save cache to storage', error);
             }
@@ -202,6 +236,7 @@
             this.cache.delete(key);
             entry.timestamp = Date.now();
             this.cache.set(key, entry);
+            this._save();
 
             return entry.value;
         }
@@ -246,7 +281,9 @@
          */
         clear() {
             this.cache.clear();
-            this._flushSync();
+            if (this.hasGMSupport) {
+                GM_deleteValue(this.storageKey);
+            }
             console.debug('Katakana Terminator: Cache cleared');
         }
 
