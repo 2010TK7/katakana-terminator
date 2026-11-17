@@ -19,6 +19,8 @@
 // @grant       GM_addStyle
 // @grant       GM_getValue
 // @grant       GM_setValue
+// @grant       GM_deleteValue
+// @grant       GM_addValueChangeListener
 // @grant       GM_registerMenuCommand
 // @connect     translate.google.com
 // @connect     translate.googleapis.com
@@ -52,6 +54,34 @@ class PersistentLRUCache {
         
         // Load from storage
         this._load();
+
+        if (typeof GM_addValueChangeListener === 'function') {
+            GM_addValueChangeListener(this.storageKey, (name, old_value, new_value, remote) => {
+                if (name !== this.storageKey || !remote) {
+                    return;
+                }
+                if (!new_value) {
+                    this.cache.clear();
+                    return;
+                }
+                try {
+                    const data = JSON.parse(new_value);
+                    Object.entries(data).forEach(([key, entry]) => {
+                        if (entry.value !== null && !this._isExpired(entry)) {
+                            const existing = this.cache.get(key);
+                            if (!existing || entry.timestamp >= existing.timestamp) {
+                                if (existing) {
+                                    this.cache.delete(key);
+                                }
+                                this.cache.set(key, entry);
+                            }
+                        }
+                    });
+                } catch (parseError) {
+                    console.error('Katakana Terminator: Failed to parse remote cache', parseError);
+                }
+            });
+        }
     }
 
     /**
@@ -258,7 +288,9 @@ class PersistentLRUCache {
      */
     clear() {
         this.cache.clear();
-        this._flushSync();
+        if (this.hasGMSupport) {
+            GM_deleteValue(this.storageKey);
+        }
         console.debug('Katakana Terminator: Cache cleared');
     }
 
