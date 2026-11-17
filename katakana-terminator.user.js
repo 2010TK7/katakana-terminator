@@ -58,6 +58,13 @@ function addRuby(node) {
     if (!node.nodeValue || !(match = katakana.exec(node.nodeValue))) {
         return false;
     }
+
+    for (let e = node; e !== null; e = e.parentNode) {
+        if (e.nextSibling?.className === 'katakana-terminator-rt') {
+            return false;
+        }
+    }
+
     var ruby = _.createElement('ruby');
     ruby.appendChild(_.createTextNode(match[0]));
     var rt = _.createElement('rt');
