@@ -133,8 +133,12 @@ class PersistentLRUCache {
                 }
             });
             
+            const sorted = Object.entries(merged)
+                .sort((a, b) => a[1].timestamp - b[1].timestamp)
+                .slice(-this.maxSize);
+
             // Write merged data
-            GM_setValue(this.storageKey, JSON.stringify(merged));
+            GM_setValue(this.storageKey, JSON.stringify(Object.fromEntries(sorted)));
         } catch (error) {
             console.error('Katakana Terminator: Failed to save cache to storage', error);
         }
