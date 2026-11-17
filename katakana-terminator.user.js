@@ -1190,6 +1190,12 @@ Core Directives:
             return null;
         }
 
+        for (let e = textNode; e !== null; e = e.parentNode) {
+            if (e.nextSibling?.className === 'katakana-terminator-rt') {
+                return null;
+            }
+        }
+
         const phrase = match.phrase;
         const ruby = doc.createElement('ruby');
         ruby.appendChild(doc.createTextNode(phrase));
