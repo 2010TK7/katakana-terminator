@@ -213,6 +213,7 @@ class PersistentLRUCache {
         this.cache.delete(key);
         entry.timestamp = Date.now();
         this.cache.set(key, entry);
+        this._save();
         
         return entry.value;
     }
