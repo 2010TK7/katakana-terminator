@@ -811,6 +811,10 @@ Core Directives:
             }
             .kt-config-dialog {
                 width: min(560px, calc(100vw - 32px));
+                max-height: calc(100vh - 32px);
+                max-height: calc(100dvh - 32px);
+                display: flex;
+                flex-direction: column;
                 border-radius: 14px;
                 background: var(--kt-bg);
                 color: var(--kt-fg);
@@ -824,7 +828,8 @@ Core Directives:
                 background: linear-gradient(120deg, #f4f8ff, #f8fff5);
                 border-bottom: 1px solid var(--kt-border);
             }
-            .kt-config-body { padding: 16px 18px; display: grid; gap: 14px; }
+            .kt-config-body { padding: 16px 18px; display: grid; gap: 14px; overflow-y: auto; }
+            #ai-settings { gap: 14px; }
             .kt-config-item { display: grid; gap: 8px; }
             .kt-config-label { font-size: 13px; font-weight: 600; }
             .kt-config-help { font-size: 12px; color: var(--kt-muted); line-height: 1.45; }
@@ -932,7 +937,7 @@ Core Directives:
 
         const aiSettings = doc.createElement('div');
         aiSettings.id = 'ai-settings';
-        aiSettings.style.display = backendSelect.value === 'ai' ? 'block' : 'none';
+        aiSettings.style.display = backendSelect.value === 'ai' ? 'grid' : 'none';
         body.appendChild(aiSettings);
 
         for (const [name, id, key] of [
@@ -1028,12 +1033,12 @@ Core Directives:
         });
 
         backendSelect.addEventListener('change', () => {
-            aiSettings.style.display = backendSelect.value === 'ai' ? 'block' : 'none';
+            aiSettings.style.display = backendSelect.value === 'ai' ? 'grid' : 'none';
         });
         cancelBtn.addEventListener('click', closeDialog);
         resetBtn.addEventListener('click', () => {
             backendSelect.value = DEFAULT_CONFIG.backend;
-            aiSettings.style.display = backendSelect.value === 'ai' ? 'block' : 'none';
+            aiSettings.style.display = backendSelect.value === 'ai' ? 'grid' : 'none';
             aiSettings.querySelector('#kt-ai-endpoint').value = DEFAULT_CONFIG.aiApiEndpoint;
             aiSettings.querySelector('#kt-ai-model').value = DEFAULT_CONFIG.aiModel;
             aiSettings.querySelector('#kt-ai-key').value = DEFAULT_CONFIG.aiApiKey;
