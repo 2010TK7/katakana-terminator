@@ -179,9 +179,10 @@
         }
 
         /**
-         * Check if entry is expired
+         * Check if entry is expired, or holds an invalid (katakana-containing) value
          */
         _isExpired(entry) {
+            if (QUICK_KATAKANA_RE.test(entry.value)) return true;
             if (this.ttlMs === 0) return false; // Never expire
             return Date.now() - entry.timestamp > this.ttlMs;
         }
@@ -310,12 +311,6 @@
         }
     }
 
-    const doc = document;
-    const queue = new Map(); // 短语 -> Set<rt>
-    const cache = new PersistentLRUCache(10000, 90); // 短语 -> 译文 | null（请求中）
-    const pendingNodes = new Set();
-    const textNodeSnapshot = new WeakMap();
-
     const EXCLUDE_TAGS = new Set([
         'ruby', 'script', 'style', 'noscript', 'select', 'textarea', 'input', 'option',
         'code', 'pre', 'kbd', 'samp',
@@ -358,6 +353,12 @@
         aiApiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', // AI API endpoint
         aiModel: 'gemini-2.5-flash-lite',
     };
+
+    const doc = document;
+    const queue = new Map(); // 短语 -> Set<rt>
+    const cache = new PersistentLRUCache(10000, 90); // 短语 -> 译文 | null（请求中）
+    const pendingNodes = new Set();
+    const textNodeSnapshot = new WeakMap();
 
     let observer = null;
     let flushTimer = null;
@@ -410,7 +411,7 @@
     function applyTranslationsByIndex(phrases, translatedByIndex) {
         phrases.forEach((phrase, index) => {
             const translated = translatedByIndex[index];
-            if (!translated) {
+            if (!translated || QUICK_KATAKANA_RE.test(translated)) {
                 cache.delete(phrase);
                 return;
             }
