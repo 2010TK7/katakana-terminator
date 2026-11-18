@@ -390,6 +390,11 @@
         queue.delete(phrase);
     }
 
+    function handleTranslationWarning(providerName, err) {
+        const message = err && err.message ? err.message : String(err || '未知错误');
+        console.warn(`Katakana Terminator: ${providerName} 翻译失败`, message, err);
+    }
+
     function handleTranslationFailure(providerName, err, phrases) {
         const message = err && err.message ? err.message : String(err || '未知错误');
         console.error(`Katakana Terminator: ${providerName} 翻译失败`, message, err);
@@ -423,6 +428,9 @@
 
     // Provider 契约：raw translate(srcLang, destLang, phrases) 必须返回与 phrases
     // 按索引对齐的译文数组（'' 表示无结果，可稍后重试），失败时抛出异常。
+    // translate 可为函数数组，构成 fallback 链：
+    // 按序尝试，抛错即换次级，直到成功或所有级均抛错，且仅在末级抛错时清除请求中占位；
+    // 抛错过的级保留原位，不影响后续调用。
     function createTranslationProvider({ name, label, translate }) {
         return {
             name,
@@ -433,11 +441,19 @@
                     cache.set(phrase, null);
                 });
 
-                try {
-                    const translatedByIndex = await translate(srcLang, destLang, phrases);
-                    applyTranslationsByIndex(phrases, translatedByIndex);
-                } catch (err) {
-                    handleTranslationFailure(name, err, phrases);
+                const translates = Array.isArray(translate) ? translate : [translate];
+                for (let i = 0; i != translates.length; ++i) {
+                    try {
+                        const translatedByIndex = await translates[i](srcLang, destLang, phrases);
+                        applyTranslationsByIndex(phrases, translatedByIndex);
+                        break;
+                    } catch (err) {
+                        if (i != translates.length - 1) {
+                            handleTranslationWarning(name, err);
+                        } else {
+                            handleTranslationFailure(name, err, phrases);
+                        }
+                    }
                 }
             },
         };
@@ -525,55 +541,114 @@
         google: createTranslationProvider({
             name: 'Google',
             label: 'Google Translate',
-            translate: (srcLang, destLang, phrases) => new Promise((resolve, reject) => {
-                const joinedText = trimEnd(phrases.join('\n'));
-                const api = 'https://translate.googleapis.com/translate_a/single';
-                const params = {
-                    client: 'gtx',
-                    dt: 't',
-                    sl: srcLang,
-                    tl: destLang,
-                    q: joinedText,
-                };
+            translate: [
+                (srcLang, destLang, phrases) => new Promise((resolve, reject) => {
+                    const joinedText = trimEnd(phrases.join('\n'));
+                    const api = 'https://translate.googleapis.com/translate_a/single';
+                    const params = {
+                        client: 'gtx',
+                        dt: 't',
+                        sl: srcLang,
+                        tl: destLang,
+                        q: joinedText,
+                    };
 
-                GM.xmlHttpRequest({
-                    method: 'GET',
-                    url: api + buildQueryString(params),
-                    onload: (res) => {
-                        if (res.status < 200 || res.status >= 300) {
-                            reject(new Error(`请求失败：${res.status} ${res.statusText}`));
-                            return;
-                        }
-
-                        let resp;
-                        try {
-                            resp = JSON.parse(res.responseText);
-                        } catch (err) {
-                            reject(new Error(`响应解析失败：${res.responseText}`));
-                            return;
-                        }
-
-                        if (!Array.isArray(resp) || !Array.isArray(resp[0])) {
-                            reject(new Error(`响应结构异常：${JSON.stringify(resp)}`));
-                            return;
-                        }
-
-                        const translatedByOriginal = new Map();
-                        resp[0].forEach((item) => {
-                            const translated = item && item[0] ? trimEnd(item[0]) : '';
-                            const original = item && item[1] ? trimEnd(item[1]) : '';
-                            if (original && translated) {
-                                translatedByOriginal.set(original, translated);
+                    GM.xmlHttpRequest({
+                        method: 'GET',
+                        url: api + buildQueryString(params),
+                        onload: (res) => {
+                            if (res.status < 200 || res.status >= 300) {
+                                reject(new Error(`请求失败：${res.status} ${res.statusText}`));
+                                return;
                             }
-                        });
 
-                        resolve(phrases.map((phrase) => translatedByOriginal.get(phrase) || ''));
-                    },
-                    onerror: (res) => {
-                        reject(new Error(`请求出错：${res.statusText}`));
-                    },
-                });
-            }),
+                            let resp;
+                            try {
+                                resp = JSON.parse(res.responseText);
+                            } catch (err) {
+                                reject(new Error(`响应解析失败：${res.responseText}`));
+                                return;
+                            }
+
+                            if (!Array.isArray(resp) || !Array.isArray(resp[0])) {
+                                reject(new Error(`响应结构异常：${JSON.stringify(resp)}`));
+                                return;
+                            }
+
+                            const translatedByOriginal = new Map();
+                            resp[0].forEach((item) => {
+                                const translated = item && item[0] ? trimEnd(item[0]) : '';
+                                const original = item && item[1] ? trimEnd(item[1]) : '';
+                                if (original && translated) {
+                                    translatedByOriginal.set(original, translated);
+                                }
+                            });
+
+                            resolve(phrases.map((phrase) => translatedByOriginal.get(phrase) || ''));
+                        },
+                        onerror: (res) => {
+                            reject(new Error(`请求出错：${res.statusText}`));
+                        },
+                    });
+                }),
+                (srcLang, destLang, phrases) => new Promise((resolve, reject) => {
+                    const joinedText = trimEnd(phrases.join('\n'));
+                    const api = 'https://translate.googleapis.com/translate_a/t';
+                    const params = {
+                        client: 'dict-chrome-ex',
+                        dt: 't',
+                        sl: srcLang,
+                        tl: destLang,
+                        q: joinedText,
+                    };
+
+                    GM.xmlHttpRequest({
+                        method: 'GET',
+                        url: api + buildQueryString(params),
+                        onload: (res) => {
+                            if (res.status < 200 || res.status >= 300) {
+                                reject(new Error(`请求失败：${res.status} ${res.statusText}`));
+                                return;
+                            }
+
+                            let resp;
+                            try {
+                                resp = JSON.parse(res.responseText);
+                            } catch (err) {
+                                reject(new Error(`响应解析失败：${res.responseText}`));
+                                return;
+                            }
+
+                            const translatedByOriginal = new Map();
+                            // ["katakana\nterminator"]
+                            if (!resp.sentences) {
+                                const translated = resp[0].split('\n');
+                                if (translated.length !== phrases.length) {
+                                    reject(new Error('Response does not match input phrases'));
+                                    return;
+                                }
+                                translated.forEach((trans, i) => {
+                                    const orig = phrases[i];
+                                    translatedByOriginal.set(orig, trimEnd(trans));
+                                });
+                            } else {
+                                resp.sentences.forEach(s => {
+                                    if (!s.orig) return;
+
+                                    const original = s.orig.trim();
+                                    const translated = s.trans.trim();
+                                    translatedByOriginal.set(original, translated);
+                                });
+                            }
+
+                            resolve(phrases.map((phrase) => translatedByOriginal.get(phrase) || ''));
+                        },
+                        onerror: (res) => {
+                            reject(new Error(`请求出错：${res.statusText}`));
+                        },
+                    });
+                }),
+            ],
         }),
         translator: createTranslationProvider({
             name: 'Translator',
