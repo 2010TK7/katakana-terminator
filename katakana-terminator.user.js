@@ -377,6 +377,28 @@
         return String(text).replace(/\s+$/, '');
     }
 
+    function getAiApiEndpointSuffix(text, mode) {
+        if (trimEnd(text) !== text) {
+            return '';
+        }
+        let url;
+        try {
+            url = new URL(text);
+        } catch {
+            return '';
+        }
+        if (url.search || url.hash) {
+            return '';
+        }
+        if (url.pathname === '/') {
+            return `${text.endsWith('/') ? '' : '/'}v1/${mode}`;
+        }
+        if (url.pathname.endsWith('/v1') || url.pathname.endsWith('/v1/')) {
+            return `${text.endsWith('/') ? '' : '/'}${mode}`;
+        }
+        return '';
+    }
+
     function updateRubyByCachedTranslations(phrase) {
         const translated = cache.get(phrase);
         if (!translated) {
@@ -714,7 +736,7 @@ Core Directives:
                 // Make API request
                 const response = await sendRequest({
                     method: "POST",
-                    url: config.aiApiEndpoint,
+                    url: `${config.aiApiEndpoint}${getAiApiEndpointSuffix(config.aiApiEndpoint, 'chat/completions')}`,
                     headers: {
                         "Content-Type": "application/json",
                         "Authorization": `Bearer ${config.aiApiKey}`
