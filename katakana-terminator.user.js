@@ -927,7 +927,7 @@ Core Directives:
                 border-bottom: 1px solid var(--kt-border);
             }
             .kt-config-body { padding: 16px 18px; display: grid; gap: 14px; overflow-y: auto; }
-            #ai-settings { gap: 14px; }
+            .kt-config-grid { display: grid; gap: 14px; }
             .kt-config-item { display: grid; gap: 8px; }
             .kt-config-label { font-size: 13px; font-weight: 600; }
             .kt-config-help { font-size: 12px; color: var(--kt-muted); line-height: 1.45; }
@@ -944,6 +944,19 @@ Core Directives:
             .kt-config-select:focus {
                 outline: 2px solid rgba(44, 107, 237, 0.35);
                 outline-offset: 1px;
+            }
+            .kt-config-select-wrap {
+                position: relative;
+            }
+            .kt-config-select-hint {
+                position: absolute;
+                inset: 0;
+                color: var(--kt-muted);
+                -webkit-text-fill-color: var(--kt-muted);
+            }
+            .kt-config-select-wrap > .kt-config-select + .kt-config-select {
+                position: relative;
+                background: transparent;
             }
             .kt-config-footer {
                 padding: 12px 18px 16px;
@@ -1035,6 +1048,7 @@ Core Directives:
 
         const aiSettings = doc.createElement('div');
         aiSettings.id = 'ai-settings';
+        aiSettings.className = 'kt-config-grid';
         aiSettings.style.display = backendSelect.value === 'ai' ? 'grid' : 'none';
         body.appendChild(aiSettings);
 
@@ -1055,7 +1069,29 @@ Core Directives:
             input.id = id;
             input.className = 'kt-config-select';
             input.value = config[key];
-            item.appendChild(input);
+
+            if (id === 'kt-ai-endpoint') {
+                const wrap = doc.createElement('div');
+                wrap.className = 'kt-config-select-wrap';
+
+                const hint = doc.createElement('input');
+                hint.className = 'kt-config-select kt-config-select-hint';
+                hint.disabled = true;
+                hint.setAttribute('aria-hidden', 'true');
+
+                const updateHint = () => {
+                    const suffix = getAiApiEndpointSuffix(input.value, 'chat/completions');
+                    hint.value = input.value + suffix;
+                    hint.style.visibility = !suffix || input.scrollWidth > input.clientWidth ? 'hidden' : 'visible';
+                };
+                updateHint();
+                input.addEventListener('input', updateHint);
+
+                wrap.append(hint, input);
+                item.appendChild(wrap);
+            } else {
+                item.appendChild(input);
+            }
 
             aiSettings.appendChild(item);
         }
@@ -1137,6 +1173,7 @@ Core Directives:
             backendSelect.value = DEFAULT_CONFIG.backend;
             aiSettings.style.display = backendSelect.value === 'ai' ? 'grid' : 'none';
             aiSettings.querySelector('#kt-ai-endpoint').value = DEFAULT_CONFIG.aiApiEndpoint;
+            aiSettings.querySelector('#kt-ai-endpoint').dispatchEvent(new Event('input'));
             aiSettings.querySelector('#kt-ai-model').value = DEFAULT_CONFIG.aiModel;
             aiSettings.querySelector('#kt-ai-key').value = DEFAULT_CONFIG.aiApiKey;
             blacklistTextarea.value = DEFAULT_CONFIG.blacklist.join('\n');
