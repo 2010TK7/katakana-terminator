@@ -1031,7 +1031,6 @@ Core Directives:
 
             const input = doc.createElement('input');
             input.id = id;
-            input.type = key === 'aiApiKey' ? 'password' : 'text';
             input.className = 'kt-config-select';
             input.value = config[key];
             item.appendChild(input);
