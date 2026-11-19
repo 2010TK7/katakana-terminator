@@ -358,7 +358,7 @@
     const queue = new Map(); // 短语 -> Set<rt>
     const cache = new PersistentLRUCache(10000, 90); // 短语 -> 译文 | null（请求中）
     const pendingNodes = new Set();
-    const textNodeSnapshot = new WeakMap();
+    const textNodeSnapshot = new WeakMap(); // TextNode -> { value: string, ownedFragments?: Node[] }
 
     let observer = null;
     let flushTimer = null;
@@ -1215,17 +1215,17 @@ Core Directives:
     function shouldSkipTextNode(textNode) {
         const text = textNode.nodeValue || '';
         if (!text.trim()) {
-            textNodeSnapshot.set(textNode, text);
+            textNodeSnapshot.set(textNode, { value: text });
             return true;
         }
 
         const snapshot = textNodeSnapshot.get(textNode);
-        if (snapshot === text) {
+        if (snapshot?.value === text) {
             return true;
         }
 
         if (!QUICK_KATAKANA_RE.test(text)) {
-            textNodeSnapshot.set(textNode, text);
+            textNodeSnapshot.set(textNode, { value: text });
             return true;
         }
 
@@ -1254,8 +1254,19 @@ Core Directives:
             }
 
             let current = node;
+            const boundary = current.nextSibling;
             while (current) {
                 current = addRuby(current);
+            }
+            const ownedFragments = [];
+            for (let e = node.nextSibling; e && e !== boundary; e = e.nextSibling) {
+                ownedFragments.push(e);
+            }
+            if (ownedFragments.length > 0) {
+                textNodeSnapshot.set(node, {
+                    value: node.nodeValue,
+                    ownedFragments
+                });
             }
         }
     }
@@ -1266,7 +1277,7 @@ Core Directives:
         const text = textNode.nodeValue;
         const match = findKatakanaMatch(text);
         if (!match) {
-            textNodeSnapshot.set(textNode, text || '');
+            textNodeSnapshot.set(textNode, { value: text || '' });
             return null;
         }
 
@@ -1344,9 +1355,27 @@ Core Directives:
 
     function mutationHandler(mutationList) {
         mutationList.forEach((record) => {
+            if (record.type === 'characterData') {
+                releaseIfRewritten(record.target);
+                return;
+            }
             record.addedNodes.forEach((node) => pendingNodes.add(node));
         });
         scheduleRescan();
+    }
+
+    function releaseIfRewritten(target) {
+        const snapshot = textNodeSnapshot.get(target);
+        if (!snapshot) {
+            return;
+        }
+        // 阻拦 splitText 触发的 characterData 且值未变的情况，避免死循环
+        if (target.nodeValue === snapshot.value) {
+            return;
+        }
+        snapshot.ownedFragments?.forEach((node) => node.remove());
+        textNodeSnapshot.delete(target);
+        pendingNodes.add(target);
     }
 
     function scheduleRescan() {
@@ -1478,7 +1507,7 @@ Core Directives:
 
         pendingNodes.add(doc.body);
         observer = new MutationObserver(mutationHandler);
-        observer.observe(doc.body, { childList: true, subtree: true });
+        observer.observe(doc.body, { childList: true, subtree: true, characterData: true });
 
         // 首次扫描
         rescanTextNodes();
