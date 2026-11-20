@@ -18,6 +18,7 @@
 // @grant       GM_registerMenuCommand
 // @grant       GM_getValue
 // @grant       GM_setValue
+// @grant       GM_addValueChangeListener
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
 // @version     2026.08.27
@@ -398,6 +399,30 @@
         }
 
         config = safeConfig;
+    }
+
+    if (typeof GM_setValue === 'function') {
+        if (typeof GM_addValueChangeListener === 'function') {
+            GM_addValueChangeListener(CONFIG_KEY, (name, old_value, new_value, remote) => {
+                if (name !== CONFIG_KEY || !remote) {
+                    return;
+                }
+                config = sanitizeConfig(new_value);
+            });
+        }
+    } else {
+        window.addEventListener('storage', (event) => {
+            if (event.key !== CONFIG_KEY || event.storageArea !== window.localStorage) {
+                return;
+            }
+            try {
+                const raw = event.newValue;
+                config = sanitizeConfig(raw ? JSON.parse(raw) : DEFAULT_CONFIG);
+            } catch (err) {
+                console.warn('Katakana Terminator: 同步配置失败', err);
+                config = { ...DEFAULT_CONFIG };
+            }
+        });
     }
 
     function registerConfigMenu() {
