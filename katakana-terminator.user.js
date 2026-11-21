@@ -813,7 +813,9 @@ Core Directives:
                 next[key] = input[key];
             }
         }
-        next.blacklist = sanitizeBlacklist(input && input.blacklist);
+        if (input && (input.blacklist || input.blacklist === '')) {
+            next.blacklist = sanitizeBlacklist(input.blacklist);
+        }
         return next;
     }
 
