@@ -340,7 +340,9 @@
         if (input && TRANSLATION_BACKENDS.has(input.backend)) {
             next.backend = input.backend;
         }
-        next.blacklist = sanitizeBlacklist(input && input.blacklist);
+        if (input && (input.blacklist || input.blacklist === '')) {
+            next.blacklist = sanitizeBlacklist(input.blacklist);
+        }
         return next;
     }
 
