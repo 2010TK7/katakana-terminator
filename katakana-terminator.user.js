@@ -316,8 +316,7 @@
         'code', 'pre', 'kbd', 'samp',
     ]);
     const QUICK_KATAKANA_RE = /[\u30A1-\u30FF\uFF66-\uFF9F]/;
-    const KATAKANA_CANDIDATE_RE = /[\u30A1-\u30FF\uFF66-\uFF9F]+/g;
-    const MIN_PHRASE_LENGTH = 2;
+    const KATAKANA_CANDIDATE_RE = /[\u30A1-\u30FA\u30FD-\u30FF][\u3099\u309A\u30A1-\u30FF]*[\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]|[\uFF66-\uFF6F\uFF71-\uFF9D][\uFF65-\uFF9F]*[\uFF66-\uFF9F]/g;
 
     const CHUNK_SIZE = 200;
     const RESCAN_DELAY_MS = 200;
@@ -1251,24 +1250,6 @@ Core Directives:
         queue.get(phrase).add(rtNode);
     }
 
-    function isAsciiWordChar(char) {
-        return !!char && /[0-9A-Za-z_]/.test(char);
-    }
-
-    function isValidKatakanaPhrase(phrase) {
-        if (!phrase || phrase.length < MIN_PHRASE_LENGTH) {
-            return false;
-        }
-
-        // 忽略纯标点型片段，如只含长音符
-        if (/^[\u30FC\u30FB\u3099\u309A\uFF9E\uFF9F]+$/.test(phrase)) {
-            return false;
-        }
-
-        // 至少包含一个基础片假名字符
-        return /[\u30A1-\u30FA\u30FD-\u30FF\uFF66-\uFF9D]/.test(phrase);
-    }
-
     function findKatakanaMatch(text) {
         if (!text || !QUICK_KATAKANA_RE.test(text)) {
             return null;
@@ -1280,16 +1261,6 @@ Core Directives:
         while ((match = KATAKANA_CANDIDATE_RE.exec(text))) {
             const phrase = match[0];
             const index = match.index;
-
-            if (!isValidKatakanaPhrase(phrase)) {
-                continue;
-            }
-
-            const prev = index > 0 ? text[index - 1] : '';
-            const next = index + phrase.length < text.length ? text[index + phrase.length] : '';
-            if (isAsciiWordChar(prev) || isAsciiWordChar(next)) {
-                continue;
-            }
 
             return { phrase, index };
         }
