@@ -316,7 +316,7 @@
         'code', 'pre', 'kbd', 'samp',
     ]);
     const QUICK_KATAKANA_RE = /[\u30A1-\u30FF\uFF66-\uFF9F]/;
-    const KATAKANA_CANDIDATE_RE = /[\u30A1-\u30FA\u30FD-\u30FF][\u3099\u309A\u30A1-\u30FF]*[\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]|[\uFF66-\uFF6F\uFF71-\uFF9D][\uFF65-\uFF9F]*[\uFF66-\uFF9F]/g;
+    const KATAKANA_CANDIDATE_RE = /[\u30A1-\u30FA\u30FD-\u30FF][\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]*[\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]|[\uFF66-\uFF6F\uFF71-\uFF9D][\uFF66-\uFF9F]*[\uFF66-\uFF9F]/g;
 
     const CHUNK_SIZE = 200;
     const RESCAN_DELAY_MS = 200;
