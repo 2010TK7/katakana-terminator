@@ -1458,7 +1458,16 @@ Core Directives:
             return;
         }
 
-        const nodes = Array.from(pendingNodes);
+        const selectors = [...EXCLUDE_TAGS].join(',');
+        const nodes = Array.from(pendingNodes).filter((node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                if (!node.parentNode) {
+                    return false;
+                }
+                node = node.parentNode;
+            }
+            return !node.closest?.(selectors) && !node.isContentEditable;
+        });
         pendingNodes.clear();
 
         console.debug('Katakana Terminator:', nodes.length, '个新增节点，页面', window.location.href);
