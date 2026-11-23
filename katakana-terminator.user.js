@@ -432,6 +432,10 @@
             return;
         }
 
+        if (window.self !== window.top) {
+            return;
+        }
+
         GM_registerMenuCommand('Katakana Terminator: 翻译设置', openConfigDialog);
     }
 
