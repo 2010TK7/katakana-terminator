@@ -463,13 +463,13 @@
                 });
 
                 const translates = Array.isArray(translate) ? translate : [translate];
-                for (let i = 0; i != translates.length; ++i) {
+                for (let i = 0; i !== translates.length; ++i) {
                     try {
                         const translatedByIndex = await translates[i](srcLang, destLang, phrases);
                         applyTranslationsByIndex(phrases, translatedByIndex);
                         break;
                     } catch (err) {
-                        if (i != translates.length - 1) {
+                        if (i !== translates.length - 1) {
                             handleTranslationWarning(name, err);
                         } else {
                             handleTranslationFailure(name, err, phrases);
@@ -734,17 +734,17 @@ Core Directives:
 
                 // Make API request
                 const response = await sendRequest({
-                    method: "POST",
+                    method: 'POST',
                     url: `${config.aiApiEndpoint}${getAiApiEndpointSuffix(config.aiApiEndpoint, 'chat/completions')}`,
                     headers: {
-                        "Content-Type": "application/json",
-                        "Authorization": `Bearer ${config.aiApiKey}`
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${config.aiApiKey}`
                     },
                     data: JSON.stringify({
                         model: config.aiModel,
                         messages: [
-                            { role: "system", content: systemPrompt },
-                            { role: "user", content: prompt }
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: prompt }
                         ],
                     })
                 });
