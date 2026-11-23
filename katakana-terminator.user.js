@@ -774,7 +774,7 @@
                 return;
             }
 
-            node.childNodes.forEach(scanTextNodes);
+            Array.from(node.childNodes).forEach(scanTextNodes);
             return;
         }
 
