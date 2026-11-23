@@ -904,6 +904,10 @@ Core Directives:
             return;
         }
 
+        if (window.self !== window.top) {
+            return;
+        }
+
         GM_registerMenuCommand('Katakana Terminator: 翻译设置', openConfigDialog);
     }
 
@@ -1300,7 +1304,7 @@ Core Directives:
                 return;
             }
 
-            node.childNodes.forEach(scanTextNodes);
+            Array.from(node.childNodes).forEach(scanTextNodes);
             return;
         }
 
