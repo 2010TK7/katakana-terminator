@@ -897,15 +897,15 @@
     }
 
     function isBrowserTranslated() {
-        // Chrome/Edge：翻译后 body 会带上 translated-ltr/translated-rtl 类
-        if (doc.body && (
-            doc.body.classList.contains('translated-ltr') ||
-            doc.body.classList.contains('translated-rtl')
+        // Chrome：翻译后 documentElement 会带上 translated-ltr/translated-rtl 类
+        if (doc.documentElement && (
+            doc.documentElement.classList.contains('translated-ltr') ||
+            doc.documentElement.classList.contains('translated-rtl')
         )) {
             return true;
         }
 
-        // Firefox：<html lang> 会被覆盖为译文语言
+        // 浏览器：<html lang> 会被覆盖为译文语言
         if (originalHtmlLang !== null) {
             const currentLang = doc.documentElement.getAttribute('lang') || '';
             if (currentLang !== originalHtmlLang) {
@@ -944,8 +944,8 @@
             return;
         }
 
-        // 记录原始 <html lang>，用于 Firefox 翻译检测。
-        // Firefox 开始翻译时会把它覆盖为译文语言。
+        // 记录原始 <html lang>，用于浏览器翻译检测。
+        // 浏览器开始翻译时会把它覆盖为译文语言。
         originalHtmlLang = doc.documentElement.getAttribute('lang') || '';
 
         if (isBrowserTranslated()) {
@@ -955,20 +955,24 @@
 
         addStyle('rt.katakana-terminator-rt::before { content: attr(data-rt); }');
 
-        // Chrome/Edge：监听 body 上的 translated-ltr/translated-rtl 类
+        // Chrome：监听 documentElement 上的 translated-ltr/translated-rtl 类
         const translationWatch = new MutationObserver(() => {
             if (isBrowserTranslated()) {
                 stopForBrowserTranslation();
             }
         });
-        translationWatch.observe(doc.body, { attributes: true, attributeFilter: ['class'] });
+        translationWatch.observe(doc.documentElement, { attributes: true, attributeFilter: ['class'] });
         translationWatchers.push(translationWatch);
 
-        // Firefox：监听 data-moz-translations-id（确定性信号，HTML 翻译）
+        // Firefox/Edge：监听 translationsId（确定性信号，HTML 翻译）
+        const translationsId = new Set([
+            'data-moz-translations-id',
+            '_mstmutation', '_msttexthash', '_msthidden', '_msthash',
+        ]);
         // 与 <html lang> 变化（早期信号，适用于所有翻译类型）
         const firefoxWatch = new MutationObserver((mutations) => {
             for (const mutation of mutations) {
-                if (mutation.attributeName === 'data-moz-translations-id') {
+                if (translationsId.has(mutation.attributeName)) {
                     stopForBrowserTranslation();
                     return;
                 }
@@ -983,7 +987,7 @@
         firefoxWatch.observe(doc.documentElement, {
             attributes: true,
             subtree: true,
-            attributeFilter: ['data-moz-translations-id', 'lang'],
+            attributeFilter: [...translationsId, 'lang'],
         });
         translationWatchers.push(firefoxWatch);
 
