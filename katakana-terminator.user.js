@@ -1,15 +1,16 @@
 // ==UserScript==
 // @name        片假名终结者
-// @name:ja  カタカナターミネーター
+// @name:zh-CN  片假名终结者
+// @name:ja     カタカナターミネーター
 // @name:en     Katakana Terminator
 // @name:ko-KR  가타카나 터미네이터
 // @description 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
 // @author      Arnie97, Leimeng52mc, Izumiko, 2010TK7
 // @license     MIT
-// @copyright   2017-2026, Katakana Terminator Contributors (https://github.com/Leimeng52mc/katakana-terminator/graphs/contributors)
+// @copyright   2017-2026, Katakana Terminator Contributors (https://github.com/2010TK7/katakana-terminator/graphs/contributors)
 // @namespace   https://github.com/Leimeng52mc
-// @homepageURL https://github.com/Leimeng52mc/katakana-terminator
-// @supportURL  https://github.com/Leimeng52mc/katakana-terminator/issues
+// @homepageURL https://github.com/2010TK7/katakana-terminator
+// @supportURL  https://greasyfork.org/scripts/607314/feedback
 // @icon        https://upload.wikimedia.org/wikipedia/commons/2/28/Ja-Ruby.png
 // @match       *://*/*
 // @run-at      document-idle
@@ -23,7 +24,7 @@
 // @connect     translate.googleapis.com
 // @connect     edge.microsoft.com
 // @connect     *
-// @version     2026.08.27
+// @version     2026.11.25
 // @description:zh-CN 在网页中的日语外来语上方标注英文原词，并支持可配置的排除网址黑名单
 // @description:ja ウェブページノニホンゴガイライゴノウエニエイゴゲンゴヲルビヒョウジ、オヨビカスタマイズカノウナジョガイURLブラックリスト
 // @description:en Convert Japanese loanwords (gairaigo) on web pages back to English with ruby annotations, with a configurable exclusion blacklist
