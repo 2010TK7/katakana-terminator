@@ -480,7 +480,8 @@
         };
     }
 
-    // Edge 内置 AI 的本地翻译 API，https://learn.microsoft.com/zh-cn/microsoft-edge/web-platform/translator-api
+    // Chrome 内置 AI 的本地翻译 API，https://developer.chrome.com/docs/ai/translator-api
+    // Edge 内置 AI 的本地翻译 API，https://learn.microsoft.com/microsoft-edge/web-platform/translator-api
     // 获取（或惰性创建）指定语言对的 Translator 会话；模型首次使用时需下载，之后常驻内存
     function getTranslatorSession(srcLang, destLang) {
         if (translatorSession && translatorSession.sourceLanguage === srcLang && translatorSession.targetLanguage === destLang) {
@@ -490,7 +491,7 @@
         const sessionPromise = (async () => {
             const availability = await Translator.availability({ sourceLanguage: srcLang, targetLanguage: destLang });
             if (availability === 'unavailable') {
-                throw new Error(`当前浏览器不支持 Translator API（需要 Microsoft Edge 148+）：${srcLang} → ${destLang} 语言对不可用`);
+                throw new Error(`当前浏览器不支持 Translator API（需要桌面版 Chrome 138+ / Edge 148+）：${srcLang} → ${destLang} 语言对不可用`);
             }
 
             return Translator.create({
@@ -673,11 +674,11 @@
         }),
         translator: createTranslationProvider({
             name: 'Translator',
-            label: 'Edge 内置 AI（离线）',
+            label: 'Translator API（离线）',
             // 单个模型会话逐段翻译，无需网络请求；模型首次使用时自动下载
             translate: async (srcLang, destLang, phrases) => {
                 if (typeof Translator === 'undefined') {
-                    throw new Error('当前浏览器不支持 Translator API（需要 Microsoft Edge 148+）');
+                    throw new Error('当前浏览器不支持 Translator API（需要桌面版 Chrome 138+ / Edge 148+）');
                 }
 
                 const session = await getTranslatorSession(srcLang, destLang);
