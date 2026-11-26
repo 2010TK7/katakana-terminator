@@ -158,11 +158,11 @@
                 });
 
                 const sorted = Object.entries(merged)
-                    .sort((a, b) => a[1].timestamp - b[1].timestamp)
-                    .slice(-this.maxSize);
+                    .sort((a, b) => a[1].timestamp - b[1].timestamp);
+                const sliced = this.maxSize > 0 ? sorted.slice(-this.maxSize) : sorted;
 
                 // Write merged data
-                GM_setValue(this.storageKey, JSON.stringify(Object.fromEntries(sorted)));
+                GM_setValue(this.storageKey, JSON.stringify(Object.fromEntries(sliced)));
             } catch (error) {
                 console.error('Katakana Terminator: Failed to save cache to storage', error);
             }
@@ -184,7 +184,7 @@
          */
         _isExpired(entry) {
             if (QUICK_KATAKANA_RE.test(entry.value)) return true;
-            if (this.ttlMs === 0) return false; // Never expire
+            if (this.ttlMs <= 0) return false; // Never expire
             return Date.now() - entry.timestamp > this.ttlMs;
         }
 
@@ -259,7 +259,7 @@
             });
 
             // Enforce size limit (remove oldest)
-            if (this.cache.size > this.maxSize) {
+            if (this.maxSize > 0 && this.cache.size > this.maxSize) {
                 const firstKey = this.cache.keys().next().value;
                 this.cache.delete(firstKey);
             }
@@ -1408,7 +1408,7 @@ Core Directives:
             console.debug(
                 'Katakana Terminator:', phraseCount, '个短语已翻译，',
                 '共', cacheHitCount, '次缓存命中，', apiRequestCount, '次请求，',
-                '缓存：', stats.count + '/' + cache.maxSize,
+                '缓存：', stats.count + '/' + (cache.maxSize > 0 ? cache.maxSize : '∞'),
                 '(' + (stats.size / 1024).toFixed(1) + ' KB)，',
                 '页面', window.location.href
             );
