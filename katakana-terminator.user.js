@@ -690,8 +690,9 @@
             name: 'AI',
             label: 'AI API',
             translate: async (srcLang, destLang, phrases) => {
-                // Build prompt
-                const prompt = `
+                const processAiChunk = async (phrases) => {
+                    // Build prompt
+                    const prompt = `
 Your task is to restore the following Japanese katakana terms to their original source language words or their Romaji representation.
 
 ## Rules
@@ -723,7 +724,7 @@ en: personal computer
 ja: kirakira
 nl: vaccin
 `;
-                const systemPrompt = `
+                    const systemPrompt = `
 You are a specialized linguistic AI assistant. Your sole purpose is to analyze Japanese katakana terms, identify their etymological origins, and return the original word or phrase in its source language.
 Core Directives:
 - **Identify Source Language**: You must accurately determine the source language (e.g., English, German, French, etc.).
@@ -734,44 +735,46 @@ Core Directives:
 - **Precision**: Maintain original capitalization for proper nouns, acronyms, or language-specific rules (e.g., German nouns).
 `;
 
-                // Make API request
-                const response = await sendRequest({
-                    method: 'POST',
-                    url: `${config.aiApiEndpoint}${getAiApiEndpointSuffix(config.aiApiEndpoint, 'chat/completions')}`,
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${config.aiApiKey}`
-                    },
-                    data: JSON.stringify({
-                        model: config.aiModel,
-                        messages: [
-                            { role: 'system', content: systemPrompt },
-                            { role: 'user', content: prompt }
-                        ],
-                    })
-                });
+                    // Make API request
+                    const response = await sendRequest({
+                        method: 'POST',
+                        url: `${config.aiApiEndpoint}${getAiApiEndpointSuffix(config.aiApiEndpoint, 'chat/completions')}`,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${config.aiApiKey}`
+                        },
+                        data: JSON.stringify({
+                            model: config.aiModel,
+                            messages: [
+                                { role: 'system', content: systemPrompt },
+                                { role: 'user', content: prompt }
+                            ],
+                        })
+                    });
 
-                const data = JSON.parse(response.responseText);
+                    const data = JSON.parse(response.responseText);
 
-                if (data.choices && data.choices[0] && data.choices[0].message) {
-                    const content = data.choices[0].message.content;
+                    if (data.choices && data.choices[0] && data.choices[0].message) {
+                        const content = data.choices[0].message.content;
 
-                    // Split response into lines
-                    const lines = content.trim().split('\n');
+                        // Split response into lines
+                        const lines = content.trim().split('\n');
 
-                    // Ensure line count matches phrase count
-                    if (lines.length === phrases.length) {
-                        return phrases.map((phrase, index) => lines[index].trim());
+                        // Ensure line count matches phrase count
+                        if (lines.length === phrases.length) {
+                            return phrases.map((phrase, index) => lines[index].trim());
+                        } else {
+                            console.debug(prompt);
+                            console.debug(content);
+                            throw new Error('AI response does not match input count');
+                        }
                     } else {
                         console.debug(prompt);
-                        console.debug(content);
-                        throw new Error('AI response does not match input count');
+                        console.debug(data);
+                        throw new Error('Invalid AI response format');
                     }
-                } else {
-                    console.debug(prompt);
-                    console.debug(data);
-                    throw new Error('Invalid AI response format');
-                }
+                };
+                return processAiChunk(phrases);
             },
         }),
     };
