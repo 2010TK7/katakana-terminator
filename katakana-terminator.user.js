@@ -164,11 +164,11 @@ class PersistentLRUCache {
             });
             
             const sorted = Object.entries(merged)
-                .sort((a, b) => a[1].timestamp - b[1].timestamp)
-                .slice(-this.maxSize);
+                .sort((a, b) => a[1].timestamp - b[1].timestamp);
+            const sliced = this.maxSize > 0 ? sorted.slice(-this.maxSize) : sorted;
 
             // Write merged data
-            GM_setValue(this.storageKey, JSON.stringify(Object.fromEntries(sorted)));
+            GM_setValue(this.storageKey, JSON.stringify(Object.fromEntries(sliced)));
         } catch (error) {
             console.error('Katakana Terminator: Failed to save cache to storage', error);
         }
@@ -189,7 +189,7 @@ class PersistentLRUCache {
      * Check if entry is expired
      */
     _isExpired(entry) {
-        if (this.ttlMs === 0) return false; // Never expire
+        if (this.ttlMs <= 0) return false; // Never expire
         return Date.now() - entry.timestamp > this.ttlMs;
     }
 
@@ -264,7 +264,7 @@ class PersistentLRUCache {
         });
         
         // Enforce size limit (remove oldest)
-        if (this.cache.size > this.maxSize) {
+        if (this.maxSize > 0 && this.cache.size > this.maxSize) {
             const firstKey = this.cache.keys().next().value;
             this.cache.delete(firstKey);
         }
@@ -445,7 +445,7 @@ const translateTextNodes = async () => {
         console.debug(
             'Katakana Terminator:', phraseCount, 'phrases processed,',
             cacheHitCount, 'cache hits,', apiRequestCount, 'API requests,',
-            'cache:', stats.count + '/' + userSettings.cacheMaxSize,
+            'cache:', stats.count + '/' + (userSettings.cacheMaxSize > 0 ? userSettings.cacheMaxSize : '∞'),
             '(' + (stats.size / 1024).toFixed(1) + ' KB),',
             'frame', window.location.href
         );
