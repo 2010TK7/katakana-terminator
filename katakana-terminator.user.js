@@ -807,17 +807,20 @@ Core Directives:
     }
 
     function sanitizeConfig(input) {
+        if (!input) {
+            return { ...DEFAULT_CONFIG };
+        }
         const next = { ...DEFAULT_CONFIG };
         next.version = CONFIG_VERSION;
-        if (input && TRANSLATION_BACKENDS.has(input.backend)) {
+        if (TRANSLATION_BACKENDS.has(input.backend)) {
             next.backend = input.backend;
         }
         for (const key of ['aiApiEndpoint', 'aiModel', 'aiApiKey']) {
-            if (input && typeof input[key] === 'string') {
+            if (typeof input[key] === 'string') {
                 next[key] = input[key];
             }
         }
-        if (input && (input.blacklist || input.blacklist === '')) {
+        if (input.blacklist || input.blacklist === '') {
             next.blacklist = sanitizeBlacklist(input.blacklist);
         }
         return next;
