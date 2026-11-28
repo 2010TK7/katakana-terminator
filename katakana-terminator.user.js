@@ -423,17 +423,38 @@
         phrases.forEach((phrase) => cache.delete(phrase));
     }
 
-    function sendRequest(requestOptions) {
-        return new Promise((resolve, reject) => {
-            GM.xmlHttpRequest({
-                ...requestOptions,
-                onload: resolve,
-                onerror: reject,
-                onabort: reject,
-                ontimeout: reject,
+    const { sendRequest, pumpQueue } = (() => {
+        let running = 0;
+        const queuing = [];
+
+        function pumpQueue() {
+            while (queuing.length > 0) {
+                const { requestOptions, resolve, reject } = queuing.shift();
+                running++;
+                const settle = (func) => (value) => {
+                    func(value);
+                    running--;
+                    pumpQueue();
+                };
+                GM.xmlHttpRequest({
+                    ...requestOptions,
+                    onload: settle(resolve),
+                    onerror: settle(reject),
+                    onabort: settle(reject),
+                    ontimeout: settle(reject),
+                });
+            }
+        }
+
+        function sendRequest(requestOptions) {
+            return new Promise((resolve, reject) => {
+                queuing.push({ requestOptions, resolve, reject });
+                pumpQueue();
             });
-        });
-    }
+        }
+
+        return { sendRequest, pumpQueue };
+    })();
 
     function applyTranslationsByIndex(phrases, translatedByIndex) {
         phrases.forEach((phrase, index) => {
