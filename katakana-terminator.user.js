@@ -803,7 +803,29 @@ Core Directives:
                         throw new Error('Invalid AI response format');
                     }
                 };
-                return processAiChunk(phrases);
+
+                const fallbackSize = [100, 10, 1];
+                const processWithFallback = async (phrases, index = 0) => {
+                    try {
+                        return await processAiChunk(phrases);
+                    } catch (err) {
+                        handleTranslationWarning('ai', err);
+                        while (index < fallbackSize.length) {
+                            if (phrases.length < fallbackSize[index]) {
+                                index++;
+                                continue;
+                            }
+                            const size = fallbackSize[index];
+                            return (await Promise.all(Array.from(
+                                { length: Math.ceil(phrases.length / size) },
+                                (_, i) => phrases.slice(i * size, (i + 1) * size)
+                            ).map(chunk => processWithFallback(chunk, index + 1)))).flat();
+                        }
+                        return phrases.map(() => '');
+                    }
+                };
+
+                return processWithFallback(phrases);
             },
         }),
     };
