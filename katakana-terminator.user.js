@@ -322,7 +322,7 @@
     const CHUNK_SIZE = 200;
     const RESCAN_DELAY_MS = 200;
     const CONFIG_KEY = 'katakana-terminator-config-v1';
-    const CONFIG_VERSION = 2.2;
+    const CONFIG_VERSION = 2.3;
     const DEFAULT_CONFIG = {
         version: CONFIG_VERSION,
         backend: 'edge', // 默认后端；合法取值来自 TRANSLATION_BACKENDS
@@ -352,6 +352,8 @@
         aiApiKey: '',     // AI API key
         aiApiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', // AI API endpoint
         aiModel: 'gemini-2.5-flash-lite',
+        concurrency: 2,
+        timeout: 30,
     };
 
     const doc = document;
@@ -428,7 +430,7 @@
         const queuing = [];
 
         function pumpQueue() {
-            while (queuing.length > 0) {
+            while (queuing.length > 0 && (config.concurrency <= 0 || running < config.concurrency)) {
                 const { requestOptions, resolve, reject } = queuing.shift();
                 running++;
                 const settle = (func) => (value) => {
@@ -442,6 +444,7 @@
                     onerror: settle(reject),
                     onabort: settle(reject),
                     ontimeout: settle(reject),
+                    ...(config.timeout > 0 ? { timeout: config.timeout * 1000 } : {}),
                 });
             }
         }
@@ -846,6 +849,12 @@ Core Directives:
                 next[key] = input[key];
             }
         }
+        for (const key of ['concurrency', 'timeout']) {
+            const num = parseFloat(input[key]);
+            if (num >= 0 && num < Infinity) {
+                next[key] = Math.ceil(num);
+            }
+        }
         if (input.blacklist || input.blacklist === '') {
             next.blacklist = sanitizeBlacklist(input.blacklist);
         }
@@ -907,6 +916,7 @@ Core Directives:
         }
 
         config = safeConfig;
+        pumpQueue();
     }
 
     if (typeof GM_setValue === 'function') {
@@ -916,6 +926,7 @@ Core Directives:
                     return;
                 }
                 config = sanitizeConfig(new_value);
+                pumpQueue();
             });
         }
     } else {
@@ -930,6 +941,7 @@ Core Directives:
                 console.warn('Katakana Terminator: 同步配置失败', err);
                 config = { ...DEFAULT_CONFIG };
             }
+            pumpQueue();
         });
     }
 
@@ -992,6 +1004,8 @@ Core Directives:
             .kt-config-body { padding: 16px 18px; display: grid; gap: 14px; overflow-y: auto; }
             .kt-config-grid { display: grid; gap: 14px; }
             .kt-config-item { display: grid; gap: 8px; }
+            .kt-config-item-horz { display: flex; align-items: center; gap: 8px; }
+            .kt-config-item-horz > input { width: 96px; margin-left: auto }
             .kt-config-label { font-size: 13px; font-weight: 600; }
             .kt-config-help { font-size: 12px; color: var(--kt-muted); line-height: 1.45; }
             .kt-config-select {
@@ -1159,6 +1173,36 @@ Core Directives:
             aiSettings.appendChild(item);
         }
 
+        const requestSettings = doc.createElement('div');
+        requestSettings.className = 'kt-config-grid';
+        requestSettings.style.display = backendSelect.value !== 'translator' ? 'grid' : 'none';
+        body.appendChild(requestSettings);
+
+        for (const [name, id, key] of [
+            ['并发(0：无限)：', 'kt-request-concurrency', 'concurrency'],
+            ['超时(秒)(0：无限)：', 'kt-request-timeout', 'timeout'],
+        ]) {
+            const item = doc.createElement('div');
+            item.className = 'kt-config-item-horz';
+
+            const label = doc.createElement('label');
+            label.className = 'kt-config-label';
+            label.textContent = name;
+            item.appendChild(label);
+
+            const input = doc.createElement('input');
+            input.id = id;
+            input.className = 'kt-config-select';
+            input.type = 'number';
+            input.min = 0;
+            input.step = 1;
+            input.value = config[key];
+            input.placeholder = DEFAULT_CONFIG[key];
+            item.appendChild(input);
+
+            requestSettings.appendChild(item);
+        }
+
         const blacklistItem = doc.createElement('div');
         blacklistItem.className = 'kt-config-item';
 
@@ -1230,6 +1274,7 @@ Core Directives:
 
         backendSelect.addEventListener('change', () => {
             aiSettings.style.display = backendSelect.value === 'ai' ? 'grid' : 'none';
+            requestSettings.style.display = backendSelect.value !== 'translator' ? 'grid' : 'none';
         });
         cancelBtn.addEventListener('click', closeDialog);
         resetBtn.addEventListener('click', () => {
@@ -1239,6 +1284,9 @@ Core Directives:
             aiSettings.querySelector('#kt-ai-endpoint').dispatchEvent(new Event('input'));
             aiSettings.querySelector('#kt-ai-model').value = DEFAULT_CONFIG.aiModel;
             aiSettings.querySelector('#kt-ai-key').value = DEFAULT_CONFIG.aiApiKey;
+            requestSettings.style.display = backendSelect.value !== 'translator' ? 'grid' : 'none';
+            requestSettings.querySelector('#kt-request-concurrency').value = DEFAULT_CONFIG.concurrency;
+            requestSettings.querySelector('#kt-request-timeout').value = DEFAULT_CONFIG.timeout;
             blacklistTextarea.value = DEFAULT_CONFIG.blacklist.join('\n');
         });
         clearCacheBtn.addEventListener('click', () => {
@@ -1254,6 +1302,8 @@ Core Directives:
                 aiApiEndpoint: aiSettings.querySelector('#kt-ai-endpoint').value,
                 aiModel: aiSettings.querySelector('#kt-ai-model').value,
                 aiApiKey: aiSettings.querySelector('#kt-ai-key').value,
+                concurrency: requestSettings.querySelector('#kt-request-concurrency').value,
+                timeout: requestSettings.querySelector('#kt-request-timeout').value,
                 blacklist: blacklistTextarea.value,
             });
 
