@@ -368,9 +368,9 @@
     let translationWatchers = [];
     let dialogStyleInjected = false;
 
-    // {"keyA": 1, "keyB": 2} => "?keyA=1&keyB=2"
+    // {"keyA": 1, "keyB": 2} => "keyA=1&keyB=2"
     function buildQueryString(params) {
-        return `?${Object.keys(params).map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`).join('&')}`;
+        return `${Object.keys(params).map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`).join('&')}`;
     }
 
     function trimEnd(text) {
@@ -545,7 +545,7 @@
             label: 'Microsoft Edge (无密钥)',
             // Edge 免鉴权直调接口，https://www.ankio.net/research/technology/microsoft-edge-translate-api
             translate: async (srcLang, destLang, phrases) => {
-                const endpoint = `https://edge.microsoft.com/translate/translatetext${buildQueryString({
+                const endpoint = `https://edge.microsoft.com/translate/translatetext?${buildQueryString({
                     from: srcLang,
                     to: destLang,
                     isEnterpriseClient: false,
@@ -599,7 +599,7 @@
 
                     const res = await sendRequest({
                         method: 'GET',
-                        url: api + buildQueryString(params),
+                        url: `${api}?${buildQueryString(params)}`,
                     });
 
                     if (res.status < 200 || res.status >= 300) {
@@ -641,7 +641,7 @@
 
                     const res = await sendRequest({
                         method: 'GET',
-                        url: api + buildQueryString(params),
+                        url: `${api}?${buildQueryString(params)}`,
                     });
 
                     if (res.status < 200 || res.status >= 300) {
