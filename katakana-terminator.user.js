@@ -585,8 +585,8 @@
         google: createTranslationProvider({
             name: 'Google',
             label: 'Google Translate',
-            translate: [
-                async (srcLang, destLang, phrases) => {
+            translate: (() => {
+                const SINGLE = (method) => async (srcLang, destLang, phrases) => {
                     const joinedText = trimEnd(phrases.join('\n'));
                     const api = 'https://translate.googleapis.com/translate_a/single';
                     const params = {
@@ -594,12 +594,21 @@
                         dt: 't',
                         sl: srcLang,
                         tl: destLang,
+                    };
+                    const body = {
                         q: joinedText,
                     };
 
-                    const res = await sendRequest({
-                        method: 'GET',
+                    const res = await sendRequest(method === 'POST' ? {
+                        method: 'POST',
                         url: `${api}?${buildQueryString(params)}`,
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        data: buildQueryString(body),
+                    } : {
+                        method: 'GET',
+                        url: `${api}?${buildQueryString({ ...params, ...body })}`,
                     });
 
                     if (res.status < 200 || res.status >= 300) {
@@ -627,8 +636,8 @@
                     });
 
                     return phrases.map((phrase) => translatedByOriginal.get(phrase) || '');
-                },
-                async (srcLang, destLang, phrases) => {
+                };
+                const T = (method) => async (srcLang, destLang, phrases) => {
                     const joinedText = trimEnd(phrases.join('\n'));
                     const api = 'https://translate.googleapis.com/translate_a/t';
                     const params = {
@@ -636,12 +645,21 @@
                         dt: 't',
                         sl: srcLang,
                         tl: destLang,
+                    };
+                    const body = {
                         q: joinedText,
                     };
 
-                    const res = await sendRequest({
-                        method: 'GET',
+                    const res = await sendRequest(method === 'POST' ? {
+                        method: 'POST',
                         url: `${api}?${buildQueryString(params)}`,
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        data: buildQueryString(body),
+                    } : {
+                        method: 'GET',
+                        url: `${api}?${buildQueryString({ ...params, ...body })}`,
                     });
 
                     if (res.status < 200 || res.status >= 300) {
@@ -677,8 +695,9 @@
                     }
 
                     return phrases.map((phrase) => translatedByOriginal.get(phrase) || '');
-                },
-            ],
+                };
+                return [SINGLE('POST'), SINGLE('GET'), T('POST'), T('GET')];
+            })(),
         }),
         translator: createTranslationProvider({
             name: 'Translator',
